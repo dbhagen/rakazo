@@ -530,6 +530,9 @@ function SpaceShell() {
     groupId,
     integrationsOpen: overlay?.kind === "integrations",
     initialBotsLoaded,
+    spaces,
+    currentSpaceId,
+    activeBotCrossSpaceCommunication: inGroup ? undefined : active?.crossSpaceCommunication,
   });
   const shellReady =
     initialBotsLoaded &&

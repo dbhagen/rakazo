@@ -1,8 +1,16 @@
 import { useLingui } from "@lingui/react/macro";
-import type { Bot, Connection, ConnectionCatalogItem, Group, Routine } from "@rakazo/contracts";
+import type {
+  Bot,
+  Connection,
+  ConnectionCatalogItem,
+  Group,
+  Routine,
+  Space,
+} from "@rakazo/contracts";
 import {
   buildComposerMentionOptions,
   createRoutineMentionBatcher,
+  crossSpaceMentionBots,
   mentionConnectorsFrom,
 } from "@rakazo/core";
 import { useQueries, useQuery } from "@tanstack/react-query";
@@ -33,6 +41,9 @@ export function useComposerMentions({
   groupId,
   integrationsOpen,
   initialBotsLoaded,
+  spaces,
+  currentSpaceId,
+  activeBotCrossSpaceCommunication,
 }: {
   rpc: ReturnType<typeof createSpaceRpc>;
   queries: SpaceQueries;
@@ -42,6 +53,11 @@ export function useComposerMentions({
   groupId: string | undefined;
   integrationsOpen: boolean;
   initialBotsLoaded: boolean;
+  /** Every Space the member belongs to, for the cross-Space @mention picker. */
+  spaces: Space[];
+  currentSpaceId: string | null | undefined;
+  /** The current 1:1 chat's bot flag; undefined in a group thread or with no active bot. */
+  activeBotCrossSpaceCommunication: boolean | undefined;
 }) {
   const { i18n } = useLingui();
   const loadRoutineMentions = useMemo(
@@ -108,18 +124,33 @@ export function useComposerMentions({
     const { catalog, connections } = composerConnections.data ?? {};
     return bots.length === 0 ? [] : mentionConnectorsFrom(connections ?? [], catalog ?? []);
   }, [bots.length, composerConnections.data]);
+  const crossSpaceBots = useMemo(
+    () =>
+      currentSpaceId
+        ? crossSpaceMentionBots({
+            inGroup,
+            currentBotCrossSpaceCommunication: activeBotCrossSpaceCommunication,
+            currentSpaceId,
+            spaces,
+          })
+        : [],
+    [activeBotCrossSpaceCommunication, currentSpaceId, inGroup, spaces],
+  );
   const composerMentionTargets = useMemo(
     () =>
       buildComposerMentionOptions({
         query: "",
         includeEveryone: inGroup,
         currentGroupId: groupId,
-        bots: bots.map((bot) => ({
-          id: bot.id,
-          name: bot.name,
-          color: bot.color,
-          avatarSet: bot.avatarSet,
-        })),
+        bots: [
+          ...bots.map((bot) => ({
+            id: bot.id,
+            name: bot.name,
+            color: bot.color,
+            avatarSet: bot.avatarSet,
+          })),
+          ...crossSpaceBots,
+        ],
         groups: groups.map((group) => ({ id: group.id, name: group.name })),
         routines: mentionRoutines.map((routine) => ({
           id: routine.id,
@@ -131,7 +162,16 @@ export function useComposerMentions({
         connectors: mentionConnectors,
         cronLabels: cronLabels(i18n.locale),
       }),
-    [bots, groupId, groups, i18n.locale, inGroup, mentionConnectors, mentionRoutines],
+    [
+      bots,
+      crossSpaceBots,
+      groupId,
+      groups,
+      i18n.locale,
+      inGroup,
+      mentionConnectors,
+      mentionRoutines,
+    ],
   );
   return { composerMentionTargets, footerLogos, setFooterLogos };
 }

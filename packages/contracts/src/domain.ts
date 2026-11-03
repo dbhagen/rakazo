@@ -243,6 +243,7 @@ export const SpaceBotSchema = BotSchema.pick({
   status: true,
   runErrorId: true,
   updatedAt: true,
+  crossSpaceCommunication: true,
 });
 export type SpaceBot = z.infer<typeof SpaceBotSchema>;
 

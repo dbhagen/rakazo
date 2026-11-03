@@ -334,6 +334,7 @@ async function memberSpaceNavigation(
           status: bot.status,
           runErrorId: bot.runErrorId,
           updatedAt: bot.updatedAt,
+          crossSpaceCommunication: bot.crossSpaceCommunication,
         })),
         groups: spaceGroups.map((group) => ({
           id: group.id,
