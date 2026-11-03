@@ -3,15 +3,21 @@ import type { AdapterContext, SecretStore } from "@rakazo/adapter-kit";
 import { VoiceAccountError } from "@rakazo/adapter-kit";
 import {
   createVoiceProvider,
+  findConnectedModelCredential,
   isFishSpeechModelId,
   isVoiceProviderId,
   listVoiceCatalog,
+  loadStoredModelSecret,
   MAX_SPEAK_CHARS,
   MAX_TRANSCRIBE_BYTES,
   NoVoiceConfigured,
   OPENAI_COMPATIBLE_VOICE_PROVIDER_ID,
   openAiCompatibleVoiceServer,
+  parseModelSecret,
   serializeOpenAiCompatibleVoiceSecret,
+  serializeVercelAiGatewayVoiceSecret,
+  VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
+  vercelAiGatewayVoiceServer,
   voiceCatalogEntry,
 } from "@rakazo/adapters";
 import type {
@@ -134,13 +140,25 @@ export async function voiceCredentialServer(
   actor: Actor,
   row: { provider: string; secretId: string },
 ) {
-  if (row.provider !== OPENAI_COMPATIBLE_VOICE_PROVIDER_ID) return undefined;
+  if (
+    row.provider !== OPENAI_COMPATIBLE_VOICE_PROVIDER_ID &&
+    row.provider !== VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID
+  ) {
+    return undefined;
+  }
   try {
     const secret = await deps.prisma.secret.findFirst({
       where: { id: row.secretId, userId: actor.userId, spaceId: null },
     });
     if (!secret) return undefined;
-    return openAiCompatibleVoiceServer(await deps.secrets.load(secret.ciphertext, secret.id));
+    const plaintext = await deps.secrets.load(secret.ciphertext, secret.id);
+    if (row.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID) {
+      const server = vercelAiGatewayVoiceServer(plaintext);
+      return server
+        ? { endpoint: "", ttsModel: server.ttsModel, sttModel: server.sttModel }
+        : undefined;
+    }
+    return openAiCompatibleVoiceServer(plaintext);
   } catch {
     // Reconnecting replaces an unreadable secret.
     return undefined;
@@ -153,9 +171,16 @@ export async function voiceCredentialServer(
  */
 export function voiceChoicesChanged(previousPlaintext: string | undefined, plaintext: string) {
   const previous = previousPlaintext ? openAiCompatibleVoiceServer(previousPlaintext) : undefined;
-  if (!previous) return false;
-  const next = openAiCompatibleVoiceServer(plaintext);
-  return previous.endpoint !== next?.endpoint || previous.ttsModel !== next?.ttsModel;
+  if (previous) {
+    const next = openAiCompatibleVoiceServer(plaintext);
+    return previous.endpoint !== next?.endpoint || previous.ttsModel !== next?.ttsModel;
+  }
+  const previousGateway = previousPlaintext
+    ? vercelAiGatewayVoiceServer(previousPlaintext)
+    : undefined;
+  if (!previousGateway) return false;
+  const nextGateway = vercelAiGatewayVoiceServer(plaintext);
+  return previousGateway.ttsModel !== nextGateway?.ttsModel;
 }
 
 /**
@@ -175,6 +200,23 @@ export function voiceCredentialPlaintext(input: {
   if (voiceCatalogEntry(input.provider)?.keyless) {
     // The credential row is what selects the provider; it has no key to keep.
     return input.provider;
+  }
+  if (input.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID) {
+    // `input.plaintext` here is the key copied from the Gateway model connection, not
+    // typed by the user: there is no separate Gateway voice key field.
+    try {
+      return serializeVercelAiGatewayVoiceSecret(
+        { apiKey: input.plaintext, ttsModel: input.ttsModel, sttModel: input.sttModel },
+        input.previousPlaintext,
+      );
+    } catch (error) {
+      throw new ORPCError("BAD_REQUEST", {
+        message:
+          error instanceof Error
+            ? error.message
+            : "That speech or transcription model id is not valid.",
+      });
+    }
   }
   if (input.provider !== OPENAI_COMPATIBLE_VOICE_PROVIDER_ID) {
     if (input.plaintext.trim().length < 8) {
@@ -198,6 +240,41 @@ export function voiceCredentialPlaintext(input: {
       message: error instanceof Error ? error.message : "That server URL is not valid.",
     });
   }
+}
+
+/**
+ * The key from the user's `vercel-ai-gateway` model connection: the only key the Gateway
+ * voice provider uses. There is no separate Gateway voice key field.
+ */
+async function gatewayModelKey(deps: VoiceDeps, actor: Actor): Promise<string> {
+  const credential = await findConnectedModelCredential(
+    deps.prisma,
+    deps.secrets,
+    actor,
+    VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
+  );
+  if (!credential) {
+    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
+  }
+  const stored = await loadStoredModelSecret(
+    deps.prisma,
+    deps.secrets,
+    actor.userId,
+    credential.secretId,
+  );
+  if (stored.status !== "loaded") {
+    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
+  }
+  let secret: ReturnType<typeof parseModelSecret>;
+  try {
+    secret = parseModelSecret(stored.plaintext);
+  } catch {
+    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
+  }
+  if (secret.kind !== "api_key" || !secret.key) {
+    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
+  }
+  return secret.key;
 }
 
 const FISH_AUDIO_PROVIDER = "fish-audio";
@@ -278,20 +355,34 @@ export async function persistVoiceCredential(
     throw new ORPCError("BAD_REQUEST", { message: "Unknown voice provider." });
   }
   const previous =
-    input.provider === OPENAI_COMPATIBLE_VOICE_PROVIDER_ID
+    input.provider === OPENAI_COMPATIBLE_VOICE_PROVIDER_ID ||
+    input.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID
       ? // An unreadable old secret only means nothing is inherited; the form must be complete.
         await loadVoiceCredential(deps, actor, input.provider).catch(() => null)
       : null;
   const allowPrivateEndpoint = await voiceMayUsePrivateEndpoint(deps, input.provider);
+  // There is no separate Gateway voice key field; the key comes from the user's
+  // `vercel-ai-gateway` model connection.
+  const connectPlaintext =
+    input.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID
+      ? await gatewayModelKey(deps, actor)
+      : input.plaintext;
   const plaintext = voiceCredentialPlaintext({
     ...input,
+    plaintext: connectPlaintext,
     previousPlaintext: previous?.apiKey,
     allowPrivateEndpoint,
   });
+  const gatewayServer =
+    input.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID
+      ? vercelAiGatewayVoiceServer(plaintext)
+      : undefined;
   const server =
     input.provider === OPENAI_COMPATIBLE_VOICE_PROVIDER_ID
       ? openAiCompatibleVoiceServer(plaintext)
-      : undefined;
+      : gatewayServer
+        ? { endpoint: "", ttsModel: gatewayServer.ttsModel, sttModel: gatewayServer.sttModel }
+        : undefined;
   const choicesChanged = voiceChoicesChanged(previous?.apiKey, plaintext);
   const requestedSpeechModel =
     input.provider === FISH_AUDIO_PROVIDER && input.speechModel !== undefined

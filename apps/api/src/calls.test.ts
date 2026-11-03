@@ -58,7 +58,12 @@ describe("voice catalog", () => {
       vi.stubEnv("RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC", "0");
       try {
         const client = createRouterClient(
-          createRouter({ env: { mcpAllowPrivateEndpoint } } as unknown as RouterDeps),
+          createRouter({
+            env: { mcpAllowPrivateEndpoint },
+            prisma: {
+              userModelCredential: { findFirst: vi.fn().mockResolvedValue(null) },
+            },
+          } as unknown as RouterDeps),
           { context: { actor } },
         );
         const catalog = await client.voice.catalog();
@@ -66,11 +71,29 @@ describe("voice catalog", () => {
           mcpAllowPrivateEndpoint,
         );
         expect(catalog.some((entry) => entry.id === "elevenlabs")).toBe(true);
+        // Gated behind a Gateway model connection, absent here.
+        expect(catalog.some((entry) => entry.id === "vercel-ai-gateway")).toBe(false);
       } finally {
         vi.unstubAllEnvs();
       }
     },
   );
+
+  it("offers Vercel AI Gateway voice only with a Gateway model connection", async () => {
+    const client = createRouterClient(
+      createRouter({
+        env: {},
+        prisma: {
+          userModelCredential: {
+            findFirst: vi.fn().mockResolvedValue({ id: "cred-1" }),
+          },
+        },
+      } as unknown as RouterDeps),
+      { context: { actor } },
+    );
+    const catalog = await client.voice.catalog();
+    expect(catalog.some((entry) => entry.id === "vercel-ai-gateway")).toBe(true);
+  });
 });
 
 describe("locked-device declines", () => {

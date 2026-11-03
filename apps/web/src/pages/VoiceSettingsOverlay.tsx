@@ -9,7 +9,10 @@ import type {
 import {
   DEFAULT_COMPATIBLE_STT_MODEL,
   DEFAULT_COMPATIBLE_TTS_MODEL,
+  DEFAULT_GATEWAY_STT_MODEL,
+  DEFAULT_GATEWAY_TTS_MODEL,
   OPENAI_COMPATIBLE_PROVIDER_ID,
+  VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
 } from "@rakazo/contracts";
 import { fetchFresh } from "@rakazo/core/query";
 import {
@@ -98,6 +101,8 @@ export function VoiceSettingsOverlay({
   const [baseUrl, setBaseUrl] = useState(cached?.credential?.endpoint ?? "");
   const [ttsModel, setTtsModel] = useState(cached?.credential?.ttsModel ?? "");
   const [sttModel, setSttModel] = useState(cached?.credential?.sttModel ?? "");
+  const [gatewayTtsModels, setGatewayTtsModels] = useState<VoiceInfo[]>([]);
+  const [gatewaySttModels, setGatewaySttModels] = useState<VoiceInfo[]>([]);
   const speechModelSave = useRef<string | null>(null);
   const voicesRequest = useRef(0);
   const [loading, setLoading] = useState(!cached);
@@ -224,10 +229,32 @@ export function VoiceSettingsOverlay({
   );
 
   const selfHosted = selected?.id === OPENAI_COMPATIBLE_PROVIDER_ID;
+  const isGateway = selected?.id === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID;
   // Connections are managed from the account; a Space can still connect one it lacks.
   const managesConnection = scope === "account" || !credential;
   const keyless = Boolean(selected?.keyless);
-  const canConnect = keyless || (selfHosted ? Boolean(baseUrl.trim()) : apiKey.trim().length >= 8);
+  const canConnect =
+    keyless || isGateway || (selfHosted ? Boolean(baseUrl.trim()) : apiKey.trim().length >= 8);
+
+  useEffect(() => {
+    if (!isGateway) return;
+    let active = true;
+    void Promise.all([
+      queryClient.fetchQuery(
+        queries.voice.gatewayModels.queryOptions({ input: { kind: "speech" } }),
+      ),
+      queryClient.fetchQuery(
+        queries.voice.gatewayModels.queryOptions({ input: { kind: "transcription" } }),
+      ),
+    ]).then(([speech, transcription]) => {
+      if (!active) return;
+      setGatewayTtsModels(speech);
+      setGatewaySttModels(transcription);
+    });
+    return () => {
+      active = false;
+    };
+  }, [isGateway, queryClient, queries]);
 
   async function connectKey() {
     if (!selected || !canConnect) return;
@@ -245,6 +272,14 @@ export function VoiceSettingsOverlay({
         ...(selfHosted
           ? {
               baseUrl: baseUrl.trim(),
+              ttsModel: ttsModel.trim() || undefined,
+              sttModel: sttModel.trim() || undefined,
+            }
+          : {}),
+        // Vercel AI Gateway has no key field: the server reuses the Gateway model
+        // connection's key and only needs the chosen speech and transcription models.
+        ...(isGateway
+          ? {
               ttsModel: ttsModel.trim() || undefined,
               sttModel: sttModel.trim() || undefined,
             }
@@ -410,7 +445,7 @@ export function VoiceSettingsOverlay({
                   />
                 </Field>
               ) : null}
-              {keyless ? null : (
+              {keyless || isGateway ? null : (
                 <Field className="mt-5">
                   <FieldLabel htmlFor={apiKeyId}>
                     <Trans>API key</Trans>
@@ -431,6 +466,61 @@ export function VoiceSettingsOverlay({
                   />
                 </Field>
               )}
+              {isGateway ? (
+                <p className="mt-5 text-sm text-muted-foreground">
+                  <Trans>Uses the key from your Vercel AI Gateway model connection.</Trans>
+                </p>
+              ) : null}
+              {isGateway ? (
+                <>
+                  <Field className="mt-5">
+                    <FieldLabel htmlFor={ttsModelId}>
+                      <Trans>Speech model</Trans>
+                    </FieldLabel>
+                    <NativeSelect
+                      id={ttsModelId}
+                      className="w-full"
+                      value={ttsModel || DEFAULT_GATEWAY_TTS_MODEL}
+                      onChange={(event) => {
+                        edited.current.add("ttsModel");
+                        setTtsModel(event.target.value);
+                      }}
+                    >
+                      {(gatewayTtsModels.length
+                        ? gatewayTtsModels
+                        : [{ id: DEFAULT_GATEWAY_TTS_MODEL, label: DEFAULT_GATEWAY_TTS_MODEL }]
+                      ).map((model) => (
+                        <NativeSelectOption key={model.id} value={model.id}>
+                          {model.label}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                  <Field className="mt-5">
+                    <FieldLabel htmlFor={sttModelId}>
+                      <Trans>Transcription model</Trans>
+                    </FieldLabel>
+                    <NativeSelect
+                      id={sttModelId}
+                      className="w-full"
+                      value={sttModel || DEFAULT_GATEWAY_STT_MODEL}
+                      onChange={(event) => {
+                        edited.current.add("sttModel");
+                        setSttModel(event.target.value);
+                      }}
+                    >
+                      {(gatewaySttModels.length
+                        ? gatewaySttModels
+                        : [{ id: DEFAULT_GATEWAY_STT_MODEL, label: DEFAULT_GATEWAY_STT_MODEL }]
+                      ).map((model) => (
+                        <NativeSelectOption key={model.id} value={model.id}>
+                          {model.label}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                </>
+              ) : null}
               {selfHosted ? (
                 <>
                   <Field className="mt-5">
