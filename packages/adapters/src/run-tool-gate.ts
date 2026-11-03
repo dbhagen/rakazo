@@ -85,6 +85,8 @@ type ApprovalCard = {
   reviewReason: string | undefined;
   summary: FleetCardSummary | undefined;
   batch: ToolBatch | undefined;
+  /** False when a rule can never skip this approval, so the card hides "Always allow". */
+  allowAlways: boolean;
 };
 
 /** A tool call that passed its approval gate, as tool handlers receive it. */
@@ -511,7 +513,12 @@ export async function gateToolCall(
     nextApprovedTool,
     bypassApproval: gateDecision === "allow" && gated,
   });
-  const card = { reviewReason, summary: request.fleetSummary, batch: connectorTool?.batch };
+  const card = {
+    reviewReason,
+    summary: request.fleetSummary,
+    batch: connectorTool?.batch,
+    allowAlways: !requiresMandatoryApproval,
+  };
 
   if (applied?.duplicate) {
     const gate = resolveDuplicateEffectGate(applied.effect, name);

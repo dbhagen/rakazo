@@ -176,6 +176,39 @@ describe("bot management approval cards", () => {
     if (block.kind !== "ask") throw new Error("expected ask block");
     expect(block.actions?.map((action) => action.id)).toEqual(["allow", "deny"]);
   });
+
+  it("omits always allow when allowAlways is false, on the generic action card", () => {
+    const block = buildApprovalAskBlock(
+      "effect-1",
+      "gmail_send_email",
+      { to: "person@example.test" },
+      [],
+      { allowAlways: false },
+    );
+    if (block.kind !== "ask") throw new Error("expected ask block");
+    expect(block.actions?.map((action) => action.id)).toEqual(["allow", "deny"]);
+  });
+
+  it("omits always allow when allowAlways is false, on the summary card", () => {
+    const block = buildApprovalAskBlock("effect-1", "demo_tool", {}, [], {
+      summary: { title: "Do a thing?", lines: ["detail"] },
+      allowAlways: false,
+    });
+    if (block.kind !== "ask") throw new Error("expected ask block");
+    expect(block.actions?.map((action) => action.id)).toEqual(["allow", "deny"]);
+  });
+
+  it("still offers always allow by default, when allowAlways is not passed", () => {
+    const block = buildApprovalAskBlock(
+      "effect-1",
+      "gmail_send_email",
+      { to: "person@example.test" },
+      [],
+      {},
+    );
+    if (block.kind !== "ask") throw new Error("expected ask block");
+    expect(block.actions?.map((action) => action.id)).toEqual(["allow", "always", "deny"]);
+  });
 });
 
 describe("agent connection response cards", () => {
