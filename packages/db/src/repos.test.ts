@@ -448,6 +448,7 @@ describe("createRepos.listSpaceBotsForSpaces", () => {
         sectionId: null,
         updatedAt: new Date("2026-08-20T00:00:00.000Z"),
         parentBotId: null,
+        crossSpaceCommunication: false,
         thread: {
           id: "thread-2",
           unread: true,
@@ -496,6 +497,7 @@ describe("createRepos.listSpaceBotsForSpaces", () => {
         threadStatus: "idle",
         runErrorId: "run-failed",
         updatedAt: "2026-08-19T12:00:00.000Z",
+        crossSpaceCommunication: false,
       },
     ]);
     const query = findMany.mock.calls[0]![0];
