@@ -1,6 +1,7 @@
 import type {
   AdapterContext,
   AdapterDescriptor,
+  SecretStore,
   SpeechClip,
   VoiceCapabilities,
   VoiceInfo,
@@ -14,6 +15,9 @@ import {
   DEFAULT_GATEWAY_TTS_MODEL,
   VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
 } from "@rakazo/contracts";
+import type { PrismaClient } from "@rakazo/db";
+import { findConnectedModelCredential, loadStoredModelSecret } from "./model-selection.js";
+import { parseModelSecret } from "./pi-oauth.js";
 import {
   MAX_SYNTHESIZED_AUDIO_BYTES,
   readVoiceJson,
@@ -73,11 +77,13 @@ export function gatewayDefaultVoiceId(ttsModel: string): string {
   return VOICES[gatewayModelProvider(ttsModel)]?.[0]?.[0] ?? "";
 }
 
-/** What the encrypted voice secret holds. The key is copied from the user's Gateway model
- *  connection at connect time; there is no separate Gateway voice key field. */
+/**
+ * What the encrypted voice secret holds. Never the Gateway key: it is read fresh from the
+ * user's `vercel-ai-gateway` model connection on every call, so a rotated or removed
+ * connection takes effect immediately, with nothing to leak if this secret is read.
+ */
 export interface VercelAiGatewayVoiceSecret {
   kind: "vercel_ai_gateway";
-  apiKey: string;
   ttsModel: string;
   sttModel: string;
 }
@@ -92,21 +98,17 @@ function modelIdOrDefault(value: string | undefined, fallback: string, label: st
 }
 
 /**
- * The secret to store: the Gateway key copied from the user's `vercel-ai-gateway` model
- * connection, plus the chosen speech and transcription model ids. Blank model ids keep the
- * previously saved ones, falling back to the proven defaults.
+ * The secret to store: only the chosen speech and transcription model ids, never the
+ * Gateway key. Blank model ids keep the previously saved ones, falling back to the
+ * proven defaults.
  */
 export function serializeVercelAiGatewayVoiceSecret(
-  input: { apiKey: string; ttsModel?: string; sttModel?: string },
+  input: { ttsModel?: string; sttModel?: string },
   previousPlaintext?: string,
 ): string {
-  if (!input.apiKey.trim()) {
-    throw new Error("Connect a Vercel AI Gateway model first.");
-  }
   const previous = previousPlaintext ? tryParseSecret(previousPlaintext) : undefined;
   const secret: VercelAiGatewayVoiceSecret = {
     kind: "vercel_ai_gateway",
-    apiKey: input.apiKey,
     ttsModel: modelIdOrDefault(
       input.ttsModel || previous?.ttsModel,
       DEFAULT_GATEWAY_TTS_MODEL,
@@ -129,6 +131,7 @@ function tryParseSecret(plaintext: string): VercelAiGatewayVoiceSecret | undefin
   }
 }
 
+/** Tolerant of an older saved secret that still has an `apiKey` field; it is ignored. */
 export function parseVercelAiGatewayVoiceSecret(plaintext: string): VercelAiGatewayVoiceSecret {
   let parsed: unknown;
   try {
@@ -137,12 +140,11 @@ export function parseVercelAiGatewayVoiceSecret(plaintext: string): VercelAiGate
     throw new Error("Saved Vercel AI Gateway voice settings are unreadable. Connect it again.");
   }
   const record = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
-  if (record.kind !== "vercel_ai_gateway" || typeof record.apiKey !== "string" || !record.apiKey) {
+  if (record.kind !== "vercel_ai_gateway") {
     throw new Error("Saved Vercel AI Gateway voice settings are unreadable. Connect it again.");
   }
   return {
     kind: "vercel_ai_gateway",
-    apiKey: record.apiKey,
     ttsModel: typeof record.ttsModel === "string" ? record.ttsModel : DEFAULT_GATEWAY_TTS_MODEL,
     sttModel: typeof record.sttModel === "string" ? record.sttModel : DEFAULT_GATEWAY_STT_MODEL,
   };
@@ -189,6 +191,53 @@ export async function listGatewayModels(
     .map((entry) => ({ id: entry.id, label: entry.id, description: entry.owned_by }));
 }
 
+/** What the provider needs to resolve the Gateway key for a request; never kept past one call. */
+export interface VercelAiGatewayVoiceDeps {
+  prisma: PrismaClient;
+  secretStore: Pick<SecretStore, "load">;
+}
+
+const CONNECT_A_GATEWAY_MODEL = "Connect a Vercel AI Gateway model first.";
+
+/**
+ * Reads the Gateway key fresh from the owning user's `vercel-ai-gateway` model connection.
+ * Called on every request, never cached: a rotated key takes effect on the next call, and
+ * a removed connection fails clearly instead of falling back to a stale copy.
+ */
+export async function resolveVercelAiGatewayApiKey(
+  deps: VercelAiGatewayVoiceDeps,
+  actor: { userId: string; spaceId: string },
+): Promise<string> {
+  const credential = await findConnectedModelCredential(
+    deps.prisma,
+    deps.secretStore,
+    actor,
+    VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
+  );
+  if (!credential) {
+    throw new Error(CONNECT_A_GATEWAY_MODEL);
+  }
+  const stored = await loadStoredModelSecret(
+    deps.prisma,
+    deps.secretStore,
+    actor.userId,
+    credential.secretId,
+  );
+  if (stored.status !== "loaded") {
+    throw new Error(CONNECT_A_GATEWAY_MODEL);
+  }
+  let secret: ReturnType<typeof parseModelSecret>;
+  try {
+    secret = parseModelSecret(stored.plaintext);
+  } catch {
+    throw new Error(CONNECT_A_GATEWAY_MODEL);
+  }
+  if (secret.kind !== "api_key" || !secret.key) {
+    throw new Error(CONNECT_A_GATEWAY_MODEL);
+  }
+  return secret.key;
+}
+
 function gatewayHeaders(kind: "speech" | "transcription", model: string, apiKey: string) {
   return {
     authorization: `Bearer ${apiKey}`,
@@ -201,11 +250,15 @@ function gatewayHeaders(kind: "speech" | "transcription", model: string, apiKey:
 
 /**
  * Vercel AI Gateway, called directly for speech and transcription. The `apiKey` argument
- * carries the serialized {@link VercelAiGatewayVoiceSecret}, not a bare key: the real
- * Gateway key is the one copied from the user's `vercel-ai-gateway` model connection.
+ * carries the serialized {@link VercelAiGatewayVoiceSecret} (model ids only); the real
+ * Gateway key is resolved fresh on every call from the context's user's
+ * `vercel-ai-gateway` model connection, never stored or cached.
  */
 export class VercelAiGatewayVoiceProvider implements VoiceProvider {
-  constructor(private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch) {}
+  constructor(
+    private readonly deps: VercelAiGatewayVoiceDeps,
+    private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+  ) {}
 
   describe(): AdapterDescriptor<VoiceCapabilities> {
     return {
@@ -216,13 +269,15 @@ export class VercelAiGatewayVoiceProvider implements VoiceProvider {
     };
   }
 
-  /**
-   * The Gateway key is already verified by the model connection it was copied from, so this
-   * only checks that the saved voice settings parse.
-   */
-  async verify(apiKey: string, _context: AdapterContext): Promise<VoiceVerifyResult> {
+  /** Checks the saved voice settings parse and that a Gateway model connection still exists. */
+  async verify(apiKey: string, context: AdapterContext): Promise<VoiceVerifyResult> {
     try {
       parseVercelAiGatewayVoiceSecret(apiKey);
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+    try {
+      await resolveVercelAiGatewayApiKey(this.deps, context);
       return { ok: true };
     } catch (error) {
       return { ok: false, message: (error as Error).message };
@@ -236,12 +291,13 @@ export class VercelAiGatewayVoiceProvider implements VoiceProvider {
 
   async synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip> {
     const secret = parseVercelAiGatewayVoiceSecret(request.apiKey);
+    const apiKey = await resolveVercelAiGatewayApiKey(this.deps, context);
     const signal = voiceDeadline(request.signal ?? context.signal, SPEAK_DEADLINE_MS);
     const model = request.model || secret.ttsModel;
     const voice = request.voiceId || gatewayDefaultVoiceId(model);
     const res = await this.fetchImpl(`${GATEWAY}/v4/ai/speech-model`, {
       method: "POST",
-      headers: gatewayHeaders("speech", model, secret.apiKey),
+      headers: gatewayHeaders("speech", model, apiKey),
       body: JSON.stringify({
         text: request.text,
         ...(voice ? { voice } : {}),
@@ -268,12 +324,13 @@ export class VercelAiGatewayVoiceProvider implements VoiceProvider {
     context: AdapterContext,
   ): Promise<{ text: string }> {
     const secret = parseVercelAiGatewayVoiceSecret(request.apiKey);
+    const apiKey = await resolveVercelAiGatewayApiKey(this.deps, context);
     const signal = voiceDeadline(request.signal ?? context.signal, TRANSCRIBE_DEADLINE_MS);
     const model = secret.sttModel;
     const mediaType = (request.mimeType || "audio/webm").split(";")[0]?.trim() || "audio/webm";
     const res = await this.fetchImpl(`${GATEWAY}/v4/ai/transcription-model`, {
       method: "POST",
-      headers: gatewayHeaders("transcription", model, secret.apiKey),
+      headers: gatewayHeaders("transcription", model, apiKey),
       body: JSON.stringify({
         audio: Buffer.from(request.audio).toString("base64"),
         mediaType,

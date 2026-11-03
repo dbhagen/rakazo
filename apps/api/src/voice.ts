@@ -3,17 +3,14 @@ import type { AdapterContext, SecretStore } from "@rakazo/adapter-kit";
 import { VoiceAccountError } from "@rakazo/adapter-kit";
 import {
   createVoiceProvider,
-  findConnectedModelCredential,
   isFishSpeechModelId,
   isVoiceProviderId,
   listVoiceCatalog,
-  loadStoredModelSecret,
   MAX_SPEAK_CHARS,
   MAX_TRANSCRIBE_BYTES,
   NoVoiceConfigured,
   OPENAI_COMPATIBLE_VOICE_PROVIDER_ID,
   openAiCompatibleVoiceServer,
-  parseModelSecret,
   serializeOpenAiCompatibleVoiceSecret,
   serializeVercelAiGatewayVoiceSecret,
   VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
@@ -72,6 +69,7 @@ async function voiceMayUsePrivateEndpoint(deps: VoiceDeps, _actor: Actor, provid
 export async function voiceProviderFor(deps: VoiceDeps, actor: Actor, provider: string) {
   return createVoiceProvider(provider, {
     allowPrivateEndpoint: await voiceMayUsePrivateEndpoint(deps, actor, provider),
+    gateway: { prisma: deps.prisma, secretStore: deps.secrets },
   });
 }
 
@@ -199,11 +197,11 @@ export function voiceCredentialPlaintext(input: {
     return input.provider;
   }
   if (input.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID) {
-    // `input.plaintext` here is the key copied from the Gateway model connection, not
-    // typed by the user: there is no separate Gateway voice key field.
+    // The saved secret never holds the Gateway key: there is no separate Gateway voice
+    // key field, and the key is read fresh from the model connection on every call.
     try {
       return serializeVercelAiGatewayVoiceSecret(
-        { apiKey: input.plaintext, ttsModel: input.ttsModel, sttModel: input.sttModel },
+        { ttsModel: input.ttsModel, sttModel: input.sttModel },
         input.previousPlaintext,
       );
     } catch (error) {
@@ -237,41 +235,6 @@ export function voiceCredentialPlaintext(input: {
       message: error instanceof Error ? error.message : "That server URL is not valid.",
     });
   }
-}
-
-/**
- * The key from the user's `vercel-ai-gateway` model connection: the only key the Gateway
- * voice provider uses. There is no separate Gateway voice key field.
- */
-async function gatewayModelKey(deps: VoiceDeps, actor: Actor): Promise<string> {
-  const credential = await findConnectedModelCredential(
-    deps.prisma,
-    deps.secrets,
-    actor,
-    VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
-  );
-  if (!credential) {
-    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
-  }
-  const stored = await loadStoredModelSecret(
-    deps.prisma,
-    deps.secrets,
-    actor.userId,
-    credential.secretId,
-  );
-  if (stored.status !== "loaded") {
-    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
-  }
-  let secret: ReturnType<typeof parseModelSecret>;
-  try {
-    secret = parseModelSecret(stored.plaintext);
-  } catch {
-    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
-  }
-  if (secret.kind !== "api_key" || !secret.key) {
-    throw new ORPCError("BAD_REQUEST", { message: "Connect a Vercel AI Gateway model first." });
-  }
-  return secret.key;
 }
 
 const FISH_AUDIO_PROVIDER = "fish-audio";
@@ -358,15 +321,10 @@ export async function persistVoiceCredential(
         await loadVoiceCredential(deps, actor, input.provider).catch(() => null)
       : null;
   const allowPrivateEndpoint = await voiceMayUsePrivateEndpoint(deps, actor, input.provider);
-  // There is no separate Gateway voice key field; the key comes from the user's
-  // `vercel-ai-gateway` model connection.
-  const connectPlaintext =
-    input.provider === VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID
-      ? await gatewayModelKey(deps, actor)
-      : input.plaintext;
+  // There is no separate Gateway voice key field; `input.plaintext` is unused for this
+  // provider, and the key is resolved fresh from the model connection on every call.
   const plaintext = voiceCredentialPlaintext({
     ...input,
-    plaintext: connectPlaintext,
     previousPlaintext: previous?.apiKey,
     allowPrivateEndpoint,
   });
@@ -385,7 +343,12 @@ export async function persistVoiceCredential(
     input.provider === FISH_AUDIO_PROVIDER && input.speechModel !== undefined
       ? fishSpeechModelValue(input.speechModel)
       : undefined;
-  const provider = createVoiceProvider(input.provider, { allowPrivateEndpoint });
+  const provider = createVoiceProvider(input.provider, {
+    allowPrivateEndpoint,
+    gateway: { prisma: deps.prisma, secretStore: deps.secrets },
+  });
+  // For Gateway this also confirms the model connection still exists, since `verify`
+  // resolves its key fresh instead of trusting a stored copy.
   const verified = await provider.verify(plaintext, voiceContext(actor, input.signal));
   if (!verified.ok) {
     throw new ORPCError("BAD_REQUEST", { message: verified.message ?? "That key was rejected." });

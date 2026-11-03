@@ -70,7 +70,17 @@ describe("createVoiceProvider", () => {
     expect(createVoiceProvider("cartesia").describe().capabilities.transcribe).toBe(false);
     expect(createVoiceProvider("fish-audio").describe().capabilities.transcribe).toBe(true);
     expect(createVoiceProvider("openai-compatible").describe().capabilities.transcribe).toBe(true);
-    expect(createVoiceProvider("vercel-ai-gateway").describe().capabilities.transcribe).toBe(true);
+    const gatewayDeps = {
+      prisma: {} as never,
+      secretStore: {} as never,
+    };
+    expect(
+      createVoiceProvider("vercel-ai-gateway", { gateway: gatewayDeps }).describe().capabilities
+        .transcribe,
+    ).toBe(true);
+    expect(() => createVoiceProvider("vercel-ai-gateway")).toThrow(
+      "The Vercel AI Gateway voice provider needs its model-connection deps.",
+    );
     expect(isVoiceProviderId("elevenlabs")).toBe(true);
     expect(isVoiceProviderId("scripted")).toBe(false);
     expect(isVoiceProviderId("piper")).toBe(false);
