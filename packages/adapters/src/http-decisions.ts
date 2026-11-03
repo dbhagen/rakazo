@@ -31,54 +31,50 @@ const responseSchema = z.object({
 });
 
 /**
- * Vercel AI Gateway's native decision protocol has no multi-choice question, only
- * booleans. Each Rakazo criteria choice becomes one boolean question (key
- * "<questionId>__<choice>"); the choice with the highest reported probability wins and
- * that probability stands in for confidence. This fan-out trades one round trip for a
- * shape Gateway documents today; swap in a native "choice" question if Gateway adds one.
+ * Vercel AI Gateway documents a "choice" question (decision-fallbacks) with the same
+ * shape Rakazo's DecisionQuestion already carries: {type, instructions, criteria}. The
+ * request passes straight through; only `state` needs stringifying.
  */
-function gatewayFanoutKey(questionId: string, choice: string): string {
-  return `${questionId}__${choice}`;
-}
-
 function toGatewayRequest(request: DecisionRequest): {
   model: string;
   state: string;
-  questions: Record<string, { type: "boolean"; instructions: string }>;
+  questions: DecisionRequest["questions"];
 } {
-  const questions: Record<string, { type: "boolean"; instructions: string }> = {};
-  for (const [questionId, question] of Object.entries(request.questions)) {
-    for (const [choice, description] of Object.entries(question.criteria)) {
-      questions[gatewayFanoutKey(questionId, choice)] = {
-        type: "boolean",
-        instructions: `${question.instructions} Answer true only if "${choice}" is the best choice: ${description}`,
-      };
-    }
-  }
-  return { model: request.model, state: JSON.stringify(request.state), questions };
+  return {
+    model: request.model,
+    state: JSON.stringify(request.state),
+    questions: request.questions,
+  };
 }
 
 const gatewayAnswerSchema = z.object({
-  type: z.literal("boolean"),
-  probability: z.number().min(0).max(1),
+  type: z.literal("choice"),
+  choice: z.string(),
+  // A fallback language model that could not answer reports confidence 0 with no
+  // probabilities: a sentinel for "unknown", not a measured zero. It still compares
+  // below minConfidence, so callers ask instead of trusting it; it must not throw.
+  confidence: z.number().min(0).max(1).optional(),
+  probabilities: z.record(z.string(), z.number()).optional(),
+});
+const gatewayProviderMetadataSchema = z.object({
+  gateway: z
+    .object({
+      cost: z.string().optional(),
+      generationId: z.string().optional(),
+    })
+    .optional(),
 });
 const gatewayResponseSchema = z.object({
   model: z.string().optional(),
   answers: z.record(z.string(), z.unknown()),
-  providerMetadata: z
-    .object({
-      gateway: z
-        .object({
-          cost: z.string().optional(),
-          generationId: z.string().optional(),
-        })
-        .optional(),
-    })
-    .optional(),
+  providerMetadata: gatewayProviderMetadataSchema.optional(),
+  provider_metadata: gatewayProviderMetadataSchema.optional(),
   usage: z
     .object({
       inputTokens: z.number().int().nonnegative().optional(),
       outputTokens: z.number().int().nonnegative().optional(),
+      input_tokens: z.number().int().nonnegative().optional(),
+      output_tokens: z.number().int().nonnegative().optional(),
     })
     .optional(),
 });
@@ -89,17 +85,14 @@ function fromGatewayAnswers(
 ): DecisionResult["answers"] {
   const answers: DecisionResult["answers"] = {};
   for (const [questionId, question] of Object.entries(request.questions)) {
-    let best: { choice: string; probability: number } | undefined;
-    for (const choice of Object.keys(question.criteria)) {
-      const parsed = gatewayAnswerSchema.safeParse(
-        rawAnswers[gatewayFanoutKey(questionId, choice)],
-      );
-      if (!parsed.success) throw new DecisionProviderError("invalid_response");
-      if (!best || parsed.data.probability > best.probability)
-        best = { choice, probability: parsed.data.probability };
-    }
-    if (!best) throw new DecisionProviderError("invalid_response");
-    answers[questionId] = { type: "choice", choice: best.choice, confidence: best.probability };
+    const answer = gatewayAnswerSchema.safeParse(rawAnswers[questionId]);
+    if (!answer.success || !Object.hasOwn(question.criteria, answer.data.choice))
+      throw new DecisionProviderError("invalid_response");
+    answers[questionId] = {
+      type: "choice",
+      choice: answer.data.choice,
+      confidence: answer.data.confidence,
+    };
   }
   return answers;
 }
@@ -172,13 +165,14 @@ export class HttpDecisionProvider implements DecisionProvider {
       );
       if (isGateway) {
         const parsed = gatewayResponseSchema.parse(raw);
-        const generationId = parsed.providerMetadata?.gateway?.generationId;
+        const metadata = parsed.providerMetadata ?? parsed.provider_metadata;
+        const generationId = metadata?.gateway?.generationId;
         if (generationId && reservation)
           await this.options.callObserver?.onRequestId?.(reservation, generationId);
-        const cost = parsed.providerMetadata?.gateway?.cost;
+        const cost = metadata?.gateway?.cost;
         usage = {
-          inputTokens: parsed.usage?.inputTokens ?? null,
-          outputTokens: parsed.usage?.outputTokens ?? null,
+          inputTokens: parsed.usage?.inputTokens ?? parsed.usage?.input_tokens ?? null,
+          outputTokens: parsed.usage?.outputTokens ?? parsed.usage?.output_tokens ?? null,
           costUsd: cost !== undefined ? Number(cost) : null,
           costSource: cost !== undefined ? "provider-reported" : null,
           providerRequestId: generationId ?? null,
