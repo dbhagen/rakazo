@@ -55,18 +55,22 @@ describe("createVoiceProvider", () => {
       "cartesia",
       "fish-audio",
       "openai-compatible",
+      "vercel-ai-gateway",
     ]);
+    // The Gateway entry is gated by a model connection at the apps/api route layer, not here.
     expect(listVoiceCatalog().map((entry) => entry.id)).toEqual([
       "elevenlabs",
       "openai",
       "cartesia",
       "fish-audio",
+      "vercel-ai-gateway",
     ]);
     expect(createVoiceProvider("elevenlabs").describe().id).toBe("elevenlabs");
     expect(createVoiceProvider("openai").describe().capabilities.transcribe).toBe(true);
     expect(createVoiceProvider("cartesia").describe().capabilities.transcribe).toBe(false);
     expect(createVoiceProvider("fish-audio").describe().capabilities.transcribe).toBe(true);
     expect(createVoiceProvider("openai-compatible").describe().capabilities.transcribe).toBe(true);
+    expect(createVoiceProvider("vercel-ai-gateway").describe().capabilities.transcribe).toBe(true);
     expect(isVoiceProviderId("elevenlabs")).toBe(true);
     expect(isVoiceProviderId("scripted")).toBe(false);
     expect(isVoiceProviderId("piper")).toBe(false);

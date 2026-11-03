@@ -1316,6 +1316,10 @@ export const appContract = {
     voices: oc
       .input(settingsScopeInput.extend({ provider: z.string().optional() }))
       .output(z.array(VoiceInfoSchema)),
+    /** Vercel AI Gateway's live speech or transcription models, from its public `GET /v1/models`. */
+    gatewayModels: oc
+      .input(z.object({ kind: z.enum(["speech", "transcription"]) }))
+      .output(z.array(VoiceInfoSchema)),
     prepare: oc
       .input(
         z.object({
