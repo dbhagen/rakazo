@@ -37,43 +37,53 @@ describePostgres("webhook trusted sources (PostgreSQL)", () => {
     app = createDb(runtimeUrl!, { poolMax: 4 });
     db = app.prisma;
     const o = owner.prisma;
-    await o.organization.create({
-      data: { id: organizationId, name: "WTS", slug: organizationId, createdAt: new Date() },
+    // Fixtures span both tenants, so they're written as the system.
+    await runAsSystem("webhook trusted sources test fixture", async () => {
+      await o.organization.create({
+        data: { id: organizationId, name: "WTS", slug: organizationId, createdAt: new Date() },
+      });
+      for (const t of tenants) {
+        await o.user.create({
+          data: {
+            id: t.userId,
+            name: t.name,
+            email: `${t.userId}@rakazo.test`,
+            emailVerified: true,
+          },
+        });
+        await o.space.create({ data: { id: t.spaceId, organizationId, name: t.name } });
+        await o.bot.create({
+          data: { id: t.botId, spaceId: t.spaceId, userId: t.userId, name: t.name, color: "#000" },
+        });
+        await o.member.create({
+          data: {
+            id: `${t.userId}-member`,
+            organizationId,
+            userId: t.userId,
+            role: "owner",
+            createdAt: new Date(),
+          },
+        });
+        await o.spaceMember.create({
+          data: {
+            id: `${t.userId}-space-member`,
+            spaceId: t.spaceId,
+            userId: t.userId,
+            organizationId,
+            role: "owner",
+            createdAt: new Date(),
+          },
+        });
+      }
     });
-    for (const t of tenants) {
-      await o.user.create({
-        data: { id: t.userId, name: t.name, email: `${t.userId}@rakazo.test`, emailVerified: true },
-      });
-      await o.space.create({ data: { id: t.spaceId, organizationId, name: t.name } });
-      await o.bot.create({
-        data: { id: t.botId, spaceId: t.spaceId, userId: t.userId, name: t.name, color: "#000" },
-      });
-      await o.member.create({
-        data: {
-          id: `${t.userId}-member`,
-          organizationId,
-          userId: t.userId,
-          role: "owner",
-          createdAt: new Date(),
-        },
-      });
-      await o.spaceMember.create({
-        data: {
-          id: `${t.userId}-space-member`,
-          spaceId: t.spaceId,
-          userId: t.userId,
-          organizationId,
-          role: "owner",
-          createdAt: new Date(),
-        },
-      });
-    }
   });
 
   afterAll(async () => {
     if (!owner) return;
-    await owner.prisma.organization.deleteMany({ where: { id: organizationId } });
-    await owner.prisma.user.deleteMany({ where: { id: { in: tenants.map((t) => t.userId) } } });
+    await runAsSystem("webhook trusted sources test cleanup", async () => {
+      await owner.prisma.organization.deleteMany({ where: { id: organizationId } });
+      await owner.prisma.user.deleteMany({ where: { id: { in: tenants.map((t) => t.userId) } } });
+    });
     for (const handle of [owner, app]) {
       await handle.prisma.$disconnect();
       await handle.pool.end();
@@ -84,6 +94,13 @@ describePostgres("webhook trusted sources (PostgreSQL)", () => {
     const rows = await owner.prisma.$queryRaw<Array<{ to_regclass: string | null }>>`
       SELECT to_regclass('public.webhook_trusted_sources')::text AS to_regclass`;
     expect(rows[0]?.to_regclass).toBe("webhook_trusted_sources");
+  });
+
+  it("requires the bypass key on the system policy, like every other table", async () => {
+    const policies = await owner.prisma.$queryRaw<Array<{ policyname: string; qual: string }>>`
+      SELECT policyname, qual FROM pg_policies WHERE tablename = 'webhook_trusted_sources'`;
+    const system = policies.find((row) => row.policyname === "webhook_trusted_sources_system");
+    expect(system?.qual).toContain("app_rls_bypass()");
   });
 
   it("trusts a source idempotently and lists it newest first", async () => {
@@ -127,7 +144,6 @@ describePostgres("webhook trusted sources (PostgreSQL)", () => {
         label: "first",
       }),
     );
-    const [trusted] = await runAsTenant(a, () => listTrustedWebhookSources(db, { botId: a.botId }));
     const target = (
       await runAsTenant(a, () => listTrustedWebhookSources(db, { botId: a.botId }))
     ).find((row) => row.sourceKey === sourceKey);
@@ -156,7 +172,6 @@ describePostgres("webhook trusted sources (PostgreSQL)", () => {
     ).filter((row) => row.sourceKey === sourceKey);
     expect(active).toHaveLength(1);
     expect(active[0]?.label).toBe("second");
-    void trusted;
   });
 
   it("blocks a tenant of another space from reading or inserting rows", async () => {
