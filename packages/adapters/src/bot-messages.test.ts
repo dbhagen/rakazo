@@ -1088,5 +1088,18 @@ describe("returnBotMessageOutcome across spaces", () => {
       expect.objectContaining({ data: expect.objectContaining({ spaceId: "workspace-2" }) }),
     );
     expect(harness.enqueue).toHaveBeenCalledOnce();
+    // The outcome replies to the bot that sent the original request
+    // (fromBotId === target.id), which would normally set replyToMessageId.
+    // Across Spaces that id is unreadable under the target's own tenant
+    // context, so it must stay unset; returnToMessageId in the block carries
+    // the same pointer instead.
+    expect(harness.tx.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          threadId: "thread-target",
+          replyToMessageId: undefined,
+        }),
+      }),
+    );
   });
 });
