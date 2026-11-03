@@ -4,6 +4,7 @@ import {
   appendConnectorIntent,
   buildComposerMentionOptions,
   connectorIntentLine,
+  crossSpaceMentionBots,
   mentionChipKey,
   mentionConnectorsFrom,
   partitionComposerMentions,
@@ -109,6 +110,116 @@ describe("buildComposerMentionOptions", () => {
     });
     expect(options).toHaveLength(81);
     expect(options.at(-1)?.name).toBe("Gmail");
+  });
+});
+
+describe("crossSpaceMentionBots", () => {
+  const otherSpace = {
+    id: "s2",
+    name: "Liatrio",
+    bots: [{ id: "b2", name: "Deno", crossSpaceCommunication: true }],
+  };
+
+  it("lists other-Space bots when both ends allow cross-Space communication", () => {
+    const options = crossSpaceMentionBots({
+      inGroup: false,
+      currentBotCrossSpaceCommunication: true,
+      currentSpaceId: "s1",
+      spaces: [{ id: "s1", name: "Home", bots: [] }, otherSpace],
+    });
+    expect(options).toEqual([
+      { id: "b2", name: "Deno", color: undefined, avatarSet: undefined, spaceName: "Liatrio" },
+    ]);
+  });
+
+  it("returns none when the current bot has the flag off", () => {
+    const options = crossSpaceMentionBots({
+      inGroup: false,
+      currentBotCrossSpaceCommunication: false,
+      currentSpaceId: "s1",
+      spaces: [{ id: "s1", name: "Home", bots: [] }, otherSpace],
+    });
+    expect(options).toEqual([]);
+  });
+
+  it("skips a candidate bot with the flag off", () => {
+    const options = crossSpaceMentionBots({
+      inGroup: false,
+      currentBotCrossSpaceCommunication: true,
+      currentSpaceId: "s1",
+      spaces: [
+        { id: "s1", name: "Home", bots: [] },
+        {
+          id: "s2",
+          name: "Liatrio",
+          bots: [{ id: "b2", name: "Deno", crossSpaceCommunication: false }],
+        },
+      ],
+    });
+    expect(options).toEqual([]);
+  });
+
+  it("returns none in a group thread", () => {
+    const options = crossSpaceMentionBots({
+      inGroup: true,
+      currentBotCrossSpaceCommunication: true,
+      currentSpaceId: "s1",
+      spaces: [{ id: "s1", name: "Home", bots: [] }, otherSpace],
+    });
+    expect(options).toEqual([]);
+  });
+
+  it("excludes the current Space's own bots", () => {
+    const options = crossSpaceMentionBots({
+      inGroup: false,
+      currentBotCrossSpaceCommunication: true,
+      currentSpaceId: "s1",
+      spaces: [
+        {
+          id: "s1",
+          name: "Home",
+          bots: [{ id: "b1", name: "Deno", crossSpaceCommunication: true }],
+        },
+        otherSpace,
+      ],
+    });
+    expect(options.map((option) => option.id)).toEqual(["b2"]);
+  });
+
+  it("treats an undefined flag as the default-on", () => {
+    const options = crossSpaceMentionBots({
+      inGroup: false,
+      currentBotCrossSpaceCommunication: undefined,
+      currentSpaceId: "s1",
+      spaces: [
+        { id: "s1", name: "Home", bots: [] },
+        {
+          id: "s2",
+          name: "Liatrio",
+          bots: [{ id: "b2", name: "Deno", crossSpaceCommunication: undefined }],
+        },
+      ],
+    });
+    expect(options).toHaveLength(1);
+  });
+});
+
+describe("buildComposerMentionOptions cross-Space subtitle", () => {
+  it("labels a cross-Space bot with its Space name, same-name same-Space bot unaffected", () => {
+    const options = buildComposerMentionOptions({
+      query: "",
+      bots: [
+        { id: "b1", name: "Deno", color: "#111" },
+        { id: "b2", name: "Deno", color: "#222", spaceName: "Liatrio" },
+      ],
+      groups: [],
+      routines: [],
+      connectors: [],
+    });
+    const subtitles = options
+      .filter((option) => option.kind === "bot")
+      .map((option) => option.subtitle);
+    expect(subtitles).toEqual(["Bot", "Bot · Liatrio"]);
   });
 });
 
