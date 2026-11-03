@@ -26,9 +26,11 @@ ALTER TABLE "webhook_trusted_sources" ADD CONSTRAINT "webhook_trusted_sources_bo
 
 ALTER TABLE "webhook_trusted_sources" ADD CONSTRAINT "webhook_trusted_sources_spaceId_fkey" FOREIGN KEY ("spaceId") REFERENCES "spaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Same policies as computer_runs: a tenant reaches only its own space's rows.
+-- A tenant reaches only its own space's rows. The system policy goes through
+-- app_rls_bypass(), which also requires the bypass key (20261114120100), like every
+-- other table's system policy since 20261114120000_rls_bypass_key rewrote them.
 ALTER TABLE "webhook_trusted_sources" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY webhook_trusted_sources_tenant ON "webhook_trusted_sources"
   USING ("spaceId" = NULLIF(current_setting('app.space_id', true), ''));
 CREATE POLICY webhook_trusted_sources_system ON "webhook_trusted_sources"
-  USING (current_setting('app.rls_bypass', true) = 'on');
+  USING ((SELECT app_rls_bypass()));
