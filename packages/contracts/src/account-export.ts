@@ -81,6 +81,7 @@ export const AccountExportRecordSchema = z.discriminatedUnion("type", [
     teamChatRules: z.string(),
     crossSpaceCommunication: z.boolean(),
     dailyCheckIns: z.boolean().default(true),
+    trustWebhookSources: z.boolean(),
     fleetManagement: z.boolean(),
     createdAt: IsoDate,
   }),

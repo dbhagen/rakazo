@@ -131,6 +131,7 @@ export const BotSchema = z.object({
   teamChatRules: z.string(),
   crossSpaceCommunication: z.boolean().optional(),
   dailyCheckIns: z.boolean().optional(),
+  trustWebhookSources: z.boolean().optional(),
   fleetManagement: z.boolean().default(true),
   disabledBuiltinTools: z.array(z.string()).default([]),
   webhookConfigured: z.boolean(),
@@ -442,6 +443,7 @@ export const UpdateBotInput = z
     teamChatRules: z.string().max(TEAM_CHAT_RULES_MAX_LENGTH).optional(),
     crossSpaceCommunication: z.boolean().optional(),
     dailyCheckIns: z.boolean().optional(),
+    trustWebhookSources: z.boolean().optional(),
     fleetManagement: z.boolean().optional(),
     disabledBuiltinTools: DisabledBuiltinToolsSchema.optional(),
     /** Write only while these settings still hold, as an undo does. */
@@ -2116,3 +2118,32 @@ export const ExportManifestSchema = z.object({
   history: z.array(ThreadMessageSchema),
 });
 export type ExportManifest = z.infer<typeof ExportManifestSchema>;
+
+/** Result of screening an inbound webhook's claimed source before it is trusted. */
+export const WebhookSourceScreenSchema = z.object({
+  verdict: z.enum(["clean", "suspicious", "error", "skipped"]),
+  hits: z.array(z.string()),
+  model: z.string().optional(),
+  reason: z.string().optional(),
+  probability: z.number().optional(),
+});
+export type WebhookSourceScreen = z.infer<typeof WebhookSourceScreenSchema>;
+
+/** Recorded on a Run started by an inbound webhook. */
+export const RunWebhookSourceSchema = z.object({
+  sourceKey: z.string(),
+  label: z.string(),
+  route: z.enum(["generic", "github"]),
+  screen: WebhookSourceScreenSchema,
+});
+export type RunWebhookSource = z.infer<typeof RunWebhookSourceSchema>;
+
+/** A webhook source a bot owner has explicitly trusted. */
+export const WebhookTrustedSourceSchema = z.object({
+  id: Id,
+  botId: Id,
+  sourceKey: z.string(),
+  label: z.string(),
+  createdAt: z.string(),
+});
+export type WebhookTrustedSource = z.infer<typeof WebhookTrustedSourceSchema>;

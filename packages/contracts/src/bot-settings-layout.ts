@@ -11,6 +11,7 @@ export const BOT_SETTINGS_SECTIONS = {
     "voice",
     "dailyCheckIns",
     "crossSpaceCommunication",
+    "trustWebhookSources",
     "fleetManagement",
     "instructions",
     "description",

@@ -452,6 +452,7 @@ model Space {
   modelOAuthSessions          ModelOAuthSession[]
   purchases                   Purchase[]
   feedbackReports             FeedbackReport[]
+  webhookTrustedSources       WebhookTrustedSource[]
   botMcpServers              BotMcpServer[]
   messagingIdentities         MessagingIdentity[]
   actionApprovalRules         ActionApprovalRule[]
@@ -764,6 +765,7 @@ model Bot {
   teamChatRules          String  @default("")
   crossSpaceCommunication Boolean @default(true)
   dailyCheckIns Boolean @default(true)
+  trustWebhookSources    Boolean @default(false)
   fleetManagement        Boolean @default(true)
   routines          Routine[]
   scratchpadItems   ScratchpadItem[]
@@ -794,6 +796,7 @@ model Bot {
   @@map("bots")
   messagingInstallations MessagingInstallation[]
   messagingInstallSessions MessagingInstallSession[]
+  webhookTrustedSources WebhookTrustedSource[]
 }
 
 model BotSection {
@@ -825,6 +828,27 @@ model BotDeletion {
 
   @@index([spaceId, deletedAt])
   @@map("bot_deletions")
+}
+
+/// Sources an owner has explicitly trusted to trigger a bot's webhook.
+/// Prisma can't express a partial unique index, so the migration adds
+/// `webhook_trusted_sources_botId_sourceKey_active_key` as raw SQL:
+/// `CREATE UNIQUE INDEX ... ON (botId, sourceKey) WHERE "revokedAt" IS NULL`,
+/// limiting each bot to at most one active row per sourceKey.
+model WebhookTrustedSource {
+  id        String    @id @default(cuid())
+  botId     String
+  bot       Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  userId    String
+  spaceId   String
+  space     Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  sourceKey String
+  label     String
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([botId, revokedAt])
+  @@map("webhook_trusted_sources")
 }
 
 model ChatGroup {
@@ -1006,6 +1030,9 @@ model Run {
   teamChatMirroredAt   DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
+  // Set when this run was started by an inbound webhook; carries the trust
+  // screening result recorded for that source at the time.
+  webhookSource        Json?
   attempts             Attempt[]
   effects              ExternalEffect[]
   steeringMessages     SteeringMessage[]

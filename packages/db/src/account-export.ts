@@ -166,6 +166,7 @@ async function* spaceRecords(
       teamChatRules: bot.teamChatRules,
       crossSpaceCommunication: bot.crossSpaceCommunication,
       dailyCheckIns: bot.dailyCheckIns,
+      trustWebhookSources: bot.trustWebhookSources,
       fleetManagement: bot.fleetManagement,
       createdAt: iso(bot.createdAt),
     };

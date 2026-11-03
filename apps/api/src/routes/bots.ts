@@ -455,6 +455,9 @@ export function botsRoutes(ctx: RouterContext) {
               ? { crossSpaceCommunication: input.crossSpaceCommunication }
               : {}),
             ...(input.dailyCheckIns !== undefined ? { dailyCheckIns: input.dailyCheckIns } : {}),
+            ...(input.trustWebhookSources !== undefined
+              ? { trustWebhookSources: input.trustWebhookSources }
+              : {}),
             ...(input.fleetManagement !== undefined
               ? { fleetManagement: input.fleetManagement }
               : {}),

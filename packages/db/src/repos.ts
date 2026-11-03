@@ -107,6 +107,7 @@ function mapBot(
     teamChatRules?: string;
     crossSpaceCommunication?: boolean;
     dailyCheckIns?: boolean;
+    trustWebhookSources?: boolean;
     fleetManagement?: boolean;
     disabledBuiltinTools?: string[];
     webhookSecretId?: string | null;
@@ -154,6 +155,7 @@ function mapBot(
     teamChatRules: bot.teamChatRules ?? "",
     crossSpaceCommunication: bot.crossSpaceCommunication ?? true,
     dailyCheckIns: bot.dailyCheckIns ?? true,
+    trustWebhookSources: bot.trustWebhookSources ?? false,
     fleetManagement: bot.fleetManagement ?? true,
     // Stored lists may name a tool that no longer exists; settings resend what they read.
     disabledBuiltinTools: [...disabledBuiltinToolSet(bot.disabledBuiltinTools)],
