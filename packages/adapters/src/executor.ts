@@ -43,6 +43,7 @@ import {
   RunHistoryWriteError,
   readRunTimingFields,
   recordUsage,
+  runAsSystem,
   settleReleasedTakeoverCards,
   spaceHasModelAccess,
 } from "@rakazo/db";
@@ -1509,24 +1510,28 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         if (!thread.groupId && bot.crossSpaceCommunication === true) {
           const remaining = BOT_DIRECTORY_LIMIT - sameSpaceTeammates.length;
           if (remaining > 0) {
-            const crossSpaceTeammates = await deps.prisma.bot.findMany({
-              where: {
-                userId: run.userId,
-                archivedAt: null,
-                id: { not: bot.id },
-                thread: { isNot: null },
-                spaceId: { not: run.spaceId },
-                crossSpaceCommunication: true,
-              },
-              select: {
-                id: true,
-                name: true,
-                description: true,
-                space: { select: { name: true } },
-              },
-              orderBy: { createdAt: "asc" },
-              take: remaining,
-            });
+            const crossSpaceTeammates = await runAsSystem(
+              "list cross-space teammates for the bot directory",
+              () =>
+                deps.prisma.bot.findMany({
+                  where: {
+                    userId: run.userId,
+                    archivedAt: null,
+                    id: { not: bot.id },
+                    thread: { isNot: null },
+                    spaceId: { not: run.spaceId },
+                    crossSpaceCommunication: true,
+                  },
+                  select: {
+                    id: true,
+                    name: true,
+                    description: true,
+                    space: { select: { name: true } },
+                  },
+                  orderBy: { createdAt: "asc" },
+                  take: remaining,
+                }),
+            );
             teammates = [
               ...sameSpaceTeammates,
               ...crossSpaceTeammates.map((candidate) => ({
