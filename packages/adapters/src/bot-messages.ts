@@ -14,6 +14,7 @@ import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
   crossSpaceCommunicationAllowed,
+  runAsSystem,
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -97,17 +98,22 @@ export async function messageBot(
   const intent = input.intent ?? "request";
   const hop = nextBotMessageHop(sourceContext?.hop);
 
-  const allCandidates = await deps.prisma.bot.findMany({
-    where: { userId: run.userId, archivedAt: null },
-    select: {
-      id: true,
-      name: true,
-      spaceId: true,
-      crossSpaceCommunication: true,
-      thread: { select: { id: true } },
-      space: { select: { name: true } },
-    },
-  });
+  // The user's bots in other Spaces are invisible under this run's own tenant
+  // context, so resolving a cross-space candidate has to look across Spaces.
+  // The userId filter keeps this scoped to the same user's own bots.
+  const allCandidates = await runAsSystem("resolve a message_bot target in another Space", () =>
+    deps.prisma.bot.findMany({
+      where: { userId: run.userId, archivedAt: null },
+      select: {
+        id: true,
+        name: true,
+        spaceId: true,
+        crossSpaceCommunication: true,
+        thread: { select: { id: true } },
+        space: { select: { name: true } },
+      },
+    }),
+  );
   const senderAllowsCrossSpace =
     allCandidates.find((bot) => bot.id === sender.id)?.crossSpaceCommunication === true;
   const sameSpaceCandidates = allCandidates.filter((bot) => bot.spaceId === run.spaceId);
@@ -225,8 +231,8 @@ export async function messageBot(
         ok: true;
         replayed: true;
       };
-  try {
-    committed = await withTransactionRetry(() =>
+  const deliver = () =>
+    withTransactionRetry(() =>
       deps.prisma.$transaction(async (tx) => {
         for (const threadId of [run.threadId, targetThreadId].sort()) {
           await tx.$queryRaw`SELECT id FROM threads WHERE id = ${threadId} FOR UPDATE`;
@@ -303,8 +309,13 @@ export async function messageBot(
           threadId: targetThreadId,
           role: "user",
           blocks: [inboundBlock],
+          // replyToMessageId is a same-thread pointer; across Spaces it would
+          // reference a message that only the other Space's tenant context
+          // can read, so the receiving bot would read it back as null. The
+          // returnToMessageId already in the block carries the same pointer
+          // across the boundary without touching this relation.
           replyToMessageId:
-            sourceContext?.fromBotId === target.id && intent !== "fyi"
+            !isCrossSpace && sourceContext?.fromBotId === target.id && intent !== "fyi"
               ? sourceContext.returnToMessageId
               : undefined,
           clientNonce: deliveryKey,
@@ -360,6 +371,13 @@ export async function messageBot(
         };
       }),
     );
+  try {
+    // Cross-space delivery writes into the target's Space (and re-reads the
+    // target bot there), both invisible under the sender run's own tenant
+    // context. Same-space delivery stays in tenant context, unchanged.
+    committed = isCrossSpace
+      ? await runAsSystem("deliver a bot message to another Space", deliver)
+      : await deliver();
   } catch (error) {
     // Two concurrent retries can both miss the in-transaction lookup; the
     // loser hits the unique key. Treat that as a successful replay.
@@ -442,10 +460,14 @@ export async function returnBotMessageOutcome(
   // messageBot reaches any active bot of this user, same space or cross-space when
   // allowed, so only an archived or deleted requester can never take the outcome.
   // messageBot re-validates permission (including cross-space flags) on its own.
-  const requester = await deps.prisma.bot.findFirst({
-    where: { id: source.fromBotId, userId: run.userId, archivedAt: null },
-    select: { id: true },
-  });
+  // The requester can be in another Space, invisible under this run's own
+  // tenant context; the userId filter keeps it scoped to the same user.
+  const requester = await runAsSystem("find a message_bot requester in another Space", () =>
+    deps.prisma.bot.findFirst({
+      where: { id: source.fromBotId, userId: run.userId, archivedAt: null },
+      select: { id: true },
+    }),
+  );
   if (!requester) {
     await markBotOutcomeReturned(deps.prisma, run.id);
     return true;
