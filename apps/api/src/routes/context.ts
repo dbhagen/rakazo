@@ -211,7 +211,17 @@ export function createRouterContext(deps: RouterDeps) {
   };
   const modelRoleCatalog = async (actor: Actor, role: ModelRole): Promise<ModelCatalogEntry[]> => {
     const catalog = await chatCatalog(actor);
-    const decisions = role === "approval" ? decisionModelCatalog() : [];
+    const decisions = role === "approval" ? await decisionModelCatalog() : [];
+    // Gateway decision models run through the user's own Gateway connection, unlike the
+    // hosted OpenRouter decision model, so they are hidden without one.
+    const hasGatewayConnection =
+      decisions.some((entry) => entry.provider === "vercel-ai-gateway") &&
+      Boolean(
+        await findConnectedModelCredential(deps.prisma, deps.secrets, actor, "vercel-ai-gateway"),
+      );
+    const visibleDecisions = decisions.filter(
+      (entry) => entry.provider !== "vercel-ai-gateway" || hasGatewayConnection,
+    );
     const managedProviders = new Set(
       catalog.filter((entry) => "managed" in entry && entry.managed).map((entry) => entry.provider),
     );
@@ -219,7 +229,10 @@ export function createRouterContext(deps: RouterDeps) {
       actor,
       [
         ...catalog,
-        ...decisions.map((entry) => ({ ...entry, managed: managedProviders.has(entry.provider) })),
+        ...visibleDecisions.map((entry) => ({
+          ...entry,
+          managed: managedProviders.has(entry.provider),
+        })),
       ].filter((entry) => modelSupportsRole(entry, role)),
     );
   };

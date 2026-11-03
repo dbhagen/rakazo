@@ -115,6 +115,108 @@ describe.each(["openrouter", "typesafe"] as const)("%s decision conformance", (p
   });
 });
 
+describe("vercel-ai-gateway decision conformance", () => {
+  const gatewayResponse = (probabilities: { pass: number; ask: number }) =>
+    new Response(
+      JSON.stringify({
+        model: request.model,
+        answers: {
+          decision__pass: { type: "boolean", probability: probabilities.pass },
+          decision__ask: { type: "boolean", probability: probabilities.ask },
+        },
+        providerMetadata: { gateway: { cost: "0.000012054", generationId: "gen_fake" } },
+        usage: { inputTokens: 287, outputTokens: 22 },
+      }),
+    );
+
+  it("translates the request to boolean fan-out questions and maps the best answer back", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(gatewayResponse({ pass: 0.9, ask: 0.1 }));
+    const onUsage = vi.fn();
+    const result = await new HttpDecisionProvider("vercel-ai-gateway", {
+      apiKey: "fake-key",
+      fetch: fetchMock,
+      onUsage,
+    }).decide(request, context);
+    expect(result.answers.decision).toEqual({ type: "choice", choice: "pass", confidence: 0.9 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://ai-gateway.vercel.sh/v1/evaluate",
+      expect.objectContaining({
+        redirect: "error",
+        signal: context.signal,
+      }),
+    );
+    const sentBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(sentBody).toEqual({
+      model: request.model,
+      state: JSON.stringify(request.state),
+      questions: {
+        decision__pass: { type: "boolean", instructions: expect.stringContaining("pass") },
+        decision__ask: { type: "boolean", instructions: expect.stringContaining("ask") },
+      },
+    });
+    expect(onUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "vercel-ai-gateway",
+        model: request.model,
+        inputTokens: 287,
+        outputTokens: 22,
+        costUsd: 0.000012054,
+        costSource: "provider-reported",
+      }),
+    );
+  });
+
+  it("picks the choice with the higher probability when ask wins", async () => {
+    const result = await new HttpDecisionProvider("vercel-ai-gateway", {
+      apiKey: "fake-key",
+      fetch: async () => gatewayResponse({ pass: 0.2, ask: 0.8 }),
+    }).decide(request, context);
+    expect(result.answers.decision).toEqual({ type: "choice", choice: "ask", confidence: 0.8 });
+  });
+
+  it("rejects a missing fan-out answer as invalid_response", async () => {
+    await expect(
+      new HttpDecisionProvider("vercel-ai-gateway", {
+        apiKey: "fake-key",
+        fetch: async () =>
+          new Response(
+            JSON.stringify({
+              model: request.model,
+              answers: { decision__pass: { type: "boolean", probability: 0.9 } },
+            }),
+          ),
+      }).decide(request, context),
+    ).rejects.toMatchObject({ kind: "invalid_response" });
+  });
+
+  it.each([
+    [401, "authentication"],
+    [422, "invalid"],
+    [429, "busy"],
+    [503, "unavailable"],
+  ] as const)("maps HTTP %i to %s", async (status, kind) => {
+    await expect(
+      new HttpDecisionProvider("vercel-ai-gateway", {
+        apiKey: "fake-key",
+        fetch: async () => new Response("", { status }),
+      }).decide(request, context),
+    ).rejects.toMatchObject({ kind });
+  });
+
+  it("aborts when the context signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      new HttpDecisionProvider("vercel-ai-gateway", {
+        apiKey: "fake-key",
+        fetch: vi.fn(),
+      }).decide(request, { ...context, signal: controller.signal }),
+    ).rejects.toThrow();
+  });
+});
+
 describe("decision provider failures", () => {
   it("refuses a blank API key before any request", () => {
     expect(() => new HttpDecisionProvider("typesafe", { apiKey: " " })).toThrow(
