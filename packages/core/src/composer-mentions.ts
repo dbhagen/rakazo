@@ -31,6 +31,8 @@ export type MentionPickerBot = {
   name: string;
   color?: string;
   avatarSet?: BotAvatarSet;
+  /** Set only for a bot from another Space, so the picker can label its subtitle. */
+  spaceName?: string;
 };
 export type MentionPickerGroup = { id: string; name: string };
 export type MentionPickerRoutine = {
@@ -354,6 +356,44 @@ export function routineScheduleSubtitle(
   return schedule;
 }
 
+export type MentionPickerSpace = {
+  id: string;
+  name: string;
+  bots: readonly (MentionPickerBot & { crossSpaceCommunication?: boolean })[];
+};
+
+/**
+ * Other-Space bots a 1:1 bot chat can also @mention, so the composer can offer a
+ * teammate by name even when it lives in a different Space. Only when the current
+ * chat's bot allows cross-Space communication (default true), and only other-Space
+ * bots that also allow it. Group chats never offer any (mentions there only wake
+ * members), and the current Space's own bots are never duplicated here.
+ */
+export function crossSpaceMentionBots(input: {
+  inGroup: boolean;
+  currentBotCrossSpaceCommunication?: boolean;
+  currentSpaceId: string;
+  spaces: readonly MentionPickerSpace[];
+}): MentionPickerBot[] {
+  if (input.inGroup) return [];
+  if (input.currentBotCrossSpaceCommunication === false) return [];
+  const options: MentionPickerBot[] = [];
+  for (const space of input.spaces) {
+    if (space.id === input.currentSpaceId) continue;
+    for (const bot of space.bots) {
+      if (bot.crossSpaceCommunication === false) continue;
+      options.push({
+        id: bot.id,
+        name: bot.name,
+        color: bot.color,
+        avatarSet: bot.avatarSet,
+        spaceName: space.name,
+      });
+    }
+  }
+  return options;
+}
+
 export function buildComposerMentionOptions(input: {
   query: string;
   bots: readonly MentionPickerBot[];
@@ -389,7 +429,7 @@ export function buildComposerMentionOptions(input: {
       kind: "bot",
       id: bot.id,
       name,
-      subtitle: "Bot",
+      subtitle: bot.spaceName ? `Bot · ${bot.spaceName}` : "Bot",
       color: bot.color,
       avatarSet: bot.avatarSet,
     });

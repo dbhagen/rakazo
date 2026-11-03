@@ -205,6 +205,7 @@ export function createRepos(
         sectionId: true,
         updatedAt: true,
         parentBotId: true,
+        crossSpaceCommunication: true,
         thread: {
           select: {
             id: true,
@@ -236,6 +237,7 @@ export function createRepos(
         threadStatus: threadRunStatus(bot.runs, bot.thread.id),
         runErrorId: rosterRunErrorId(bot.thread.runs[0], activeRun),
         updatedAt: rosterUpdatedAt(bot.thread.messages[0], bot.updatedAt).toISOString(),
+        crossSpaceCommunication: bot.crossSpaceCommunication ?? true,
       };
     });
   }
