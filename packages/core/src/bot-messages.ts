@@ -26,6 +26,8 @@ export interface BotAddress {
   id: string;
   name: string;
   description?: string;
+  /** Set when the bot lives in another space, to label it in a shared directory. */
+  spaceName?: string;
 }
 
 export function clampBotMessage(text: string): string {
@@ -95,7 +97,10 @@ export function formatBotRosterLines(bots: readonly BotAddress[]): string[] {
         description = escaped;
       }
     }
-    return `- ${name} (id: ${bot.id})${description ? `: ${description}` : ""}`;
+    const spaceLabel = bot.spaceName?.trim()
+      ? ` [space: ${escapeDirectoryField(bot.spaceName.trim())}]`
+      : "";
+    return `- ${name} (id: ${bot.id})${spaceLabel}${description ? `: ${description}` : ""}`;
   });
 }
 

@@ -30,6 +30,16 @@ function deps(
     /** Simulate a unique (threadId, clientNonce) race after both retries miss. */
     uniqueConflictOnCommit?: boolean;
     transactionConflictOnce?: boolean;
+    /** Target spaceId/space name reported by the in-transaction re-check. */
+    targetSpaceId?: string;
+    targetSpaceName?: string;
+    /** Rows `crossSpaceCommunicationAllowed`'s raw query returns inside the transaction. */
+    crossSpaceRows?: Array<{
+      id: string;
+      spaceId: string;
+      crossSpaceCommunication: boolean;
+      archivedAt: Date | null;
+    }>;
   } = {},
 ) {
   const enqueue = vi.fn().mockResolvedValue(undefined);
@@ -42,7 +52,12 @@ function deps(
         : { blocks: options.hopBlocks ?? [] },
     );
   const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([{ id: "thread" }]),
+    // The thread-lock query and crossSpaceCommunicationAllowed's bots query share
+    // this mock; tell them apart by the literal SQL fragment each one sends.
+    $queryRaw: vi.fn().mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings[0]?.includes("FROM bots")) return options.crossSpaceRows ?? [];
+      return [{ id: "thread" }];
+    }),
     run: {
       findFirst: vi
         .fn()
@@ -51,7 +66,13 @@ function deps(
       create: vi.fn().mockResolvedValue({ id: "run-2" }),
     },
     bot: {
-      findFirst: vi.fn().mockResolvedValue(options.targetArchived ? null : { id: "bot-target" }),
+      findFirst: vi
+        .fn()
+        .mockResolvedValue(
+          options.targetArchived
+            ? null
+            : { id: "bot-target", spaceId: options.targetSpaceId ?? run.spaceId },
+        ),
     },
     task: { create: vi.fn().mockResolvedValue({ id: "task-1" }) },
     message: {
@@ -66,13 +87,19 @@ function deps(
   const prisma = {
     bot: {
       findFirst: vi.fn().mockResolvedValue(options.requesterArchived ? null : { id: "bot-target" }),
-      findMany: vi
-        .fn()
-        .mockResolvedValue(
-          options.bots ?? [
-            { id: "bot-target", name: "Analyst", title: "", thread: { id: "thread-target" } },
-          ],
-        ),
+      findMany: vi.fn().mockResolvedValue(
+        options.bots ?? [
+          {
+            id: "bot-target",
+            name: "Analyst",
+            title: "",
+            spaceId: run.spaceId,
+            crossSpaceCommunication: true,
+            space: { name: "Default" },
+            thread: { id: "thread-target" },
+          },
+        ],
+      ),
     },
     message: { findUnique: messageFindUnique, findMany: vi.fn().mockResolvedValue([]) },
     run: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
@@ -181,7 +208,17 @@ describe("messaging another bot", () => {
 
   it("refuses a bot messaging itself", async () => {
     const harness = deps({
-      bots: [{ id: "bot-sender", name: "Researcher", title: "", thread: { id: "thread-sender" } }],
+      bots: [
+        {
+          id: "bot-sender",
+          name: "Researcher",
+          title: "",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-sender" },
+        },
+      ],
     });
     const sent = await messageBot(harness.deps, run, sender, {
       bot_id: "bot-sender",
@@ -302,8 +339,24 @@ describe("messaging another bot", () => {
   it("does not inherit a request reply link when messaging another bot", async () => {
     const harness = deps({
       bots: [
-        { id: "bot-target", name: "Analyst", title: "", thread: { id: "thread-target" } },
-        { id: "bot-other", name: "Writer", title: "", thread: { id: "thread-other" } },
+        {
+          id: "bot-target",
+          name: "Analyst",
+          title: "",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-target" },
+        },
+        {
+          id: "bot-other",
+          name: "Writer",
+          title: "",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-other" },
+        },
       ],
       hopBlocks: [
         {
@@ -386,8 +439,24 @@ describe("messaging another bot", () => {
   it("does not let a result label bypass the hop limit toward an unrelated bot", async () => {
     const harness = deps({
       bots: [
-        { id: "bot-target", name: "Analyst", title: "", thread: { id: "thread-target" } },
-        { id: "bot-other", name: "Writer", title: "", thread: { id: "thread-other" } },
+        {
+          id: "bot-target",
+          name: "Analyst",
+          title: "",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-target" },
+        },
+        {
+          id: "bot-other",
+          name: "Writer",
+          title: "",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-other" },
+        },
       ],
       hopBlocks: [
         {
@@ -791,7 +860,7 @@ describe("automatic outcome return", () => {
 
     expect(returned).toBe(true);
     expect(harness.deps.prisma.bot.findFirst).toHaveBeenCalledWith({
-      where: { id: "bot-target", spaceId: run.spaceId, userId: run.userId, archivedAt: null },
+      where: { id: "bot-target", userId: run.userId, archivedAt: null },
       select: { id: true },
     });
     expect(harness.enqueue).not.toHaveBeenCalled();
@@ -803,5 +872,221 @@ describe("automatic outcome return", () => {
       },
       data: { botOutcomeReturnedAt: expect.any(Date) },
     });
+  });
+});
+
+describe("cross-space messaging", () => {
+  const senderBot = (crossSpaceCommunication: boolean) => ({
+    id: "bot-sender",
+    name: "Researcher",
+    spaceId: run.spaceId,
+    crossSpaceCommunication,
+    space: { name: "Default" },
+    thread: { id: "thread-sender" },
+  });
+  const crossSpaceTarget = (
+    crossSpaceCommunication: boolean,
+    overrides: Partial<Record<string, unknown>> = {},
+  ) => ({
+    id: "bot-target",
+    name: "Analyst",
+    spaceId: "workspace-2",
+    crossSpaceCommunication,
+    space: { name: "Other Space" },
+    thread: { id: "thread-target" },
+    ...overrides,
+  });
+
+  it("delivers to a cross-space target when both flags are on", async () => {
+    const harness = deps({
+      bots: [senderBot(true), crossSpaceTarget(true)],
+      targetSpaceId: "workspace-2",
+      crossSpaceRows: [
+        { id: "bot-sender", spaceId: run.spaceId, crossSpaceCommunication: true, archivedAt: null },
+        {
+          id: "bot-target",
+          spaceId: "workspace-2",
+          crossSpaceCommunication: true,
+          archivedAt: null,
+        },
+      ],
+    });
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "cross-space ping",
+    });
+    expect(sent).toMatchObject({ ok: true, botId: "bot-target", name: "Analyst" });
+    expect(sent.ok && sent.note).toContain("Other Space space");
+    expect(harness.tx.task.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ spaceId: "workspace-2" }) }),
+    );
+    expect(harness.tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ spaceId: "workspace-2" }) }),
+    );
+    expect(harness.tx.event.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ data: expect.objectContaining({ spaceId: "workspace-2" }) }),
+    );
+    expect(harness.tx.event.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ data: expect.objectContaining({ spaceId: run.spaceId }) }),
+    );
+  });
+
+  it("refuses a cross-space target when the sender's flag is off", async () => {
+    const harness = deps({ bots: [senderBot(false), crossSpaceTarget(true)] });
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "cross-space ping",
+    });
+    expect(sent).toEqual({
+      ok: false,
+      error:
+        "Analyst is in another space and cross-space bot communication is disabled for one of the bots",
+    });
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cross-space target when the target's flag is off", async () => {
+    const harness = deps({ bots: [senderBot(true), crossSpaceTarget(false)] });
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "cross-space ping",
+    });
+    expect(sent).toEqual({
+      ok: false,
+      error:
+        "Analyst is in another space and cross-space bot communication is disabled for one of the bots",
+    });
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses delivery when the flag flips between resolve and commit", async () => {
+    const harness = deps({
+      bots: [senderBot(true), crossSpaceTarget(true)],
+      targetSpaceId: "workspace-2",
+      crossSpaceRows: [
+        { id: "bot-sender", spaceId: run.spaceId, crossSpaceCommunication: true, archivedAt: null },
+        {
+          id: "bot-target",
+          spaceId: "workspace-2",
+          crossSpaceCommunication: false,
+          archivedAt: null,
+        },
+      ],
+    });
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "cross-space ping",
+    });
+    expect(sent).toEqual({ ok: false, error: "cross-space bot communication is disabled" });
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+  });
+
+  it("prefers a same-space bot over a cross-space bot sharing its name", async () => {
+    const harness = deps({
+      bots: [
+        senderBot(true),
+        {
+          id: "bot-same",
+          name: "Analyst",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-same" },
+        },
+        crossSpaceTarget(true),
+      ],
+    });
+    const sent = await messageBot(harness.deps, run, sender, {
+      confirm_name: "Analyst",
+      message: "hello",
+    });
+    expect(sent).toMatchObject({ ok: true, botId: "bot-same" });
+  });
+
+  it("refuses an ambiguous name shared by two cross-space bots with none in this space", async () => {
+    const harness = deps({
+      bots: [
+        senderBot(true),
+        crossSpaceTarget(true),
+        {
+          id: "bot-target-2",
+          name: "Analyst",
+          spaceId: "workspace-3",
+          crossSpaceCommunication: true,
+          space: { name: "Third Space" },
+          thread: { id: "thread-target-2" },
+        },
+      ],
+    });
+    const sent = await messageBot(harness.deps, run, sender, {
+      confirm_name: "Analyst",
+      message: "hello",
+    });
+    expect(sent).toEqual({
+      ok: false,
+      error: "more than one bot is named Analyst in other spaces; pass bot_id",
+    });
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("returnBotMessageOutcome across spaces", () => {
+  it("delivers an outcome to a requester in another space", async () => {
+    const harness = deps({
+      bots: [
+        {
+          id: "bot-sender",
+          name: "Researcher",
+          spaceId: run.spaceId,
+          crossSpaceCommunication: true,
+          space: { name: "Default" },
+          thread: { id: "thread-sender" },
+        },
+        {
+          id: "bot-target",
+          name: "Coordinator",
+          spaceId: "workspace-2",
+          crossSpaceCommunication: true,
+          space: { name: "Other Space" },
+          thread: { id: "thread-target" },
+        },
+      ],
+      targetSpaceId: "workspace-2",
+      crossSpaceRows: [
+        { id: "bot-sender", spaceId: run.spaceId, crossSpaceCommunication: true, archivedAt: null },
+        {
+          id: "bot-target",
+          spaceId: "workspace-2",
+          crossSpaceCommunication: true,
+          archivedAt: null,
+        },
+      ],
+      hopBlocks: [
+        {
+          kind: "bot_message_received",
+          fromBotId: "bot-target",
+          fromBotName: "Coordinator",
+          text: "research this",
+          hop: 1,
+          intent: "request",
+          returnToMessageId: "message-request",
+        },
+      ],
+    });
+
+    const returned = await returnBotMessageOutcome(
+      harness.deps,
+      { ...run, sourceMessageId: "message-source" },
+      sender,
+      "The answer is 42.",
+    );
+
+    expect(returned).toBe(true);
+    expect(harness.tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ spaceId: "workspace-2" }) }),
+    );
+    expect(harness.enqueue).toHaveBeenCalledOnce();
   });
 });

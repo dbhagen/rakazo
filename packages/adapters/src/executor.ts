@@ -1574,7 +1574,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           : history;
         const runtimeHistory = [...historicalContext, ...historyWithImages];
         // Without a roster a bot only knows the bots it spawned itself.
-        const [teammates, groupDirectory] = await Promise.all([
+        const [sameSpaceTeammates, groupDirectory] = await Promise.all([
           thread.groupId
             ? []
             : deps.prisma.bot.findMany({
@@ -1591,6 +1591,46 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               }),
           !thread.groupId ? loadBotGroupDirectory(deps.prisma, run) : undefined,
         ]);
+        let teammates: Array<{
+          id: string;
+          name: string;
+          description: string;
+          spaceName?: string;
+        }> = sameSpaceTeammates;
+        // A bot with cross-space communication on also sees the user's other
+        // cross-space-enabled bots, labeled by space, up to the same budget.
+        if (!thread.groupId && bot.crossSpaceCommunication === true) {
+          const remaining = BOT_DIRECTORY_LIMIT - sameSpaceTeammates.length;
+          if (remaining > 0) {
+            const crossSpaceTeammates = await deps.prisma.bot.findMany({
+              where: {
+                userId: run.userId,
+                archivedAt: null,
+                id: { not: bot.id },
+                thread: { isNot: null },
+                spaceId: { not: run.spaceId },
+                crossSpaceCommunication: true,
+              },
+              select: {
+                id: true,
+                name: true,
+                description: true,
+                space: { select: { name: true } },
+              },
+              orderBy: { createdAt: "asc" },
+              take: remaining,
+            });
+            teammates = [
+              ...sameSpaceTeammates,
+              ...crossSpaceTeammates.map((candidate) => ({
+                id: candidate.id,
+                name: candidate.name,
+                description: candidate.description,
+                spaceName: candidate.space.name,
+              })),
+            ];
+          }
+        }
         const botDirectory =
           [renderBotDirectory(teammates), groupDirectory].filter(Boolean).join("\n\n") || undefined;
 

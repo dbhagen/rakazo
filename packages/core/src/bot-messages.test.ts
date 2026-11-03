@@ -62,6 +62,26 @@ describe("Unicode boundaries", () => {
   });
 });
 
+describe("cross-space roster labels", () => {
+  it("labels a cross-space bot and escapes the space name", () => {
+    const lines = formatBotRosterLines([
+      { id: "a", name: "A", description: "desc", spaceName: "Acme <Team> & Co" },
+      { id: "b", name: "B" },
+    ]);
+    expect(lines[0]).toBe("- A (id: a) [space: Acme &lt;Team&gt; &amp; Co]: desc");
+    expect(lines[1]).toBe("- B (id: b)");
+  });
+
+  it("renders the teammate directory with a cross-space label", () => {
+    const directory = renderBotDirectory([
+      { id: "a", name: "A", spaceName: "Liatrio" },
+      { id: "b", name: "B" },
+    ]);
+    expect(directory).toContain("- A (id: a) [space: Liatrio]");
+    expect(directory).toContain("- B (id: b)");
+  });
+});
+
 describe("bot message silence", () => {
   it("surfaces an FYI when it replies to a delegated request", () => {
     expect(botMessageAllowsSilence("fyi", true)).toBe(false);

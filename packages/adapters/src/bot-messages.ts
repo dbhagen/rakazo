@@ -13,6 +13,7 @@ import type { PrismaClient } from "@rakazo/db";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
+  crossSpaceCommunicationAllowed,
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -96,18 +97,80 @@ export async function messageBot(
   const intent = input.intent ?? "request";
   const hop = nextBotMessageHop(sourceContext?.hop);
 
-  const candidates = await deps.prisma.bot.findMany({
-    where: { spaceId: run.spaceId, userId: run.userId, archivedAt: null },
-    select: { id: true, name: true, thread: { select: { id: true } } },
+  const allCandidates = await deps.prisma.bot.findMany({
+    where: { userId: run.userId, archivedAt: null },
+    select: {
+      id: true,
+      name: true,
+      spaceId: true,
+      crossSpaceCommunication: true,
+      thread: { select: { id: true } },
+      space: { select: { name: true } },
+    },
   });
-  const target = resolveBotAddress(candidates, {
+  const senderAllowsCrossSpace =
+    allCandidates.find((bot) => bot.id === sender.id)?.crossSpaceCommunication === true;
+  const sameSpaceCandidates = allCandidates.filter((bot) => bot.spaceId === run.spaceId);
+  const crossSpaceCandidates = senderAllowsCrossSpace
+    ? allCandidates.filter(
+        (bot) => bot.spaceId !== run.spaceId && bot.crossSpaceCommunication === true,
+      )
+    : [];
+
+  function resolveCrossSpace() {
+    const name = input.confirm_name?.trim();
+    const botId = input.bot_id?.trim();
+    if (botId) return { target: crossSpaceCandidates.find((bot) => bot.id === botId) };
+    if (!name) return { target: undefined };
+    const exact = crossSpaceCandidates.filter((bot) => bot.name === name);
+    if (exact.length === 1) return { target: exact[0] };
+    if (exact.length > 1)
+      return {
+        target: undefined,
+        error: `more than one bot is named ${name} in other spaces; pass bot_id`,
+      };
+    const lower = name.toLowerCase();
+    const matches = crossSpaceCandidates.filter((bot) => bot.name.toLowerCase() === lower);
+    if (matches.length === 1) return { target: matches[0] };
+    if (matches.length > 1)
+      return {
+        target: undefined,
+        error: `more than one bot is named ${name} in other spaces; pass bot_id`,
+      };
+    return { target: undefined };
+  }
+
+  const sameSpaceTarget = resolveBotAddress(sameSpaceCandidates, {
     botId: input.bot_id,
     name: input.confirm_name,
   });
-  if (!target) return { ok: false as const, error: "no bot found with that id or name" };
+  const crossSpaceResolution = sameSpaceTarget ? undefined : resolveCrossSpace();
+  if (!sameSpaceTarget && crossSpaceResolution?.error)
+    return { ok: false as const, error: crossSpaceResolution.error };
+  const target = sameSpaceTarget ?? crossSpaceResolution?.target;
+  if (!target) {
+    // Distinguish "does not exist" from "exists, but filtered out by the cross-space flags".
+    const botId = input.bot_id?.trim();
+    const name = input.confirm_name?.trim();
+    const otherSpaceMatch = botId
+      ? allCandidates.find((bot) => bot.id === botId && bot.spaceId !== run.spaceId)
+      : name
+        ? allCandidates.find(
+            (bot) => bot.spaceId !== run.spaceId && bot.name.toLowerCase() === name.toLowerCase(),
+          )
+        : undefined;
+    if (otherSpaceMatch) {
+      return {
+        ok: false as const,
+        error: `${otherSpaceMatch.name} is in another space and cross-space bot communication is disabled for one of the bots`,
+      };
+    }
+    return { ok: false as const, error: "no bot found with that id or name" };
+  }
   if (target.id === sender.id) return { ok: false as const, error: "a bot cannot message itself" };
   if (!target.thread)
     return { ok: false as const, error: `${target.name} has no chat to deliver to` };
+  const isCrossSpace = target.spaceId !== run.spaceId;
   const returnsToSender =
     options?.allowTerminalSource === true &&
     (intent === "result" || intent === "status") &&
@@ -199,14 +262,21 @@ export async function messageBot(
         const stillAddressable = await tx.bot.findFirst({
           where: {
             id: target.id,
-            spaceId: run.spaceId,
             userId: run.userId,
             archivedAt: null,
           },
-          select: { id: true },
+          select: { id: true, spaceId: true },
         });
         if (!stillAddressable)
           return { ok: false as const, error: `${target.name} is no longer available` };
+        if (stillAddressable.spaceId !== run.spaceId) {
+          // The cross-space setting can flip between resolving the target above
+          // and committing here; re-check it under the row locks.
+          const allowed = await crossSpaceCommunicationAllowed(tx, sender.id, target.id);
+          if (!allowed)
+            return { ok: false as const, error: "cross-space bot communication is disabled" };
+        }
+        const targetSpaceId = stillAddressable.spaceId;
 
         // Echo into the sender's chat in the same transaction so a failed notify
         // cannot leave one side delivered and the other blank.
@@ -242,7 +312,7 @@ export async function messageBot(
         });
         const task = await tx.task.create({
           data: {
-            spaceId: run.spaceId,
+            spaceId: targetSpaceId,
             botId: target.id,
             threadId: targetThreadId,
             userId: run.userId,
@@ -252,7 +322,7 @@ export async function messageBot(
         });
         const nextRun = await tx.run.create({
           data: {
-            spaceId: run.spaceId,
+            spaceId: targetSpaceId,
             botId: target.id,
             threadId: targetThreadId,
             taskId: task.id,
@@ -265,7 +335,7 @@ export async function messageBot(
         });
         await tx.message.update({ where: { id: inbound.id }, data: { runId: nextRun.id } });
         const inboundEvent = await appendEventInTransaction(tx, {
-          spaceId: run.spaceId,
+          spaceId: targetSpaceId,
           threadId: targetThreadId,
           botId: target.id,
           type: "thread.message.created",
@@ -320,7 +390,7 @@ export async function messageBot(
     botId: target.id,
     name: target.name,
     delivered: message,
-    note: `Sent to ${target.name}. Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
+    note: `Sent to ${target.name}${isCrossSpace ? ` (${target.space.name} space)` : ""}. Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
   };
 }
 
@@ -369,10 +439,11 @@ export async function returnBotMessageOutcome(
     await markBotOutcomeReturned(deps.prisma, run.id);
     return true;
   }
-  // messageBot reaches only active bots of this space and user, so an archived or deleted
-  // requester can never take the outcome. Handled: nothing is left to deliver.
+  // messageBot reaches any active bot of this user, same space or cross-space when
+  // allowed, so only an archived or deleted requester can never take the outcome.
+  // messageBot re-validates permission (including cross-space flags) on its own.
   const requester = await deps.prisma.bot.findFirst({
-    where: { id: source.fromBotId, spaceId: run.spaceId, userId: run.userId, archivedAt: null },
+    where: { id: source.fromBotId, userId: run.userId, archivedAt: null },
     select: { id: true },
   });
   if (!requester) {
