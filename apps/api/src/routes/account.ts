@@ -3,7 +3,9 @@ import {
   effectiveModelRole,
   hasHostedModelCredits,
   isAutoReviewCheckerConfigured,
+  listGatewayModels,
   PushSessionEndedError,
+  VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
 } from "@rakazo/adapters";
 import type { ActionApprovalRule, Actor, Me, SettingsScope } from "@rakazo/contracts";
 import { approvalModeFromPreference, approvalPreferenceFromMode } from "@rakazo/core";
@@ -264,9 +266,18 @@ export function accountRoutes(ctx: RouterContext) {
       }),
     },
     voice: {
-      catalog: authed.voice.catalog.handler(async () =>
-        listVoiceCatalog({ allowPrivateEndpoint: deps.env?.mcpAllowPrivateEndpoint }),
-      ),
+      catalog: authed.voice.catalog.handler(async ({ context }) => {
+        const catalog = listVoiceCatalog({
+          allowPrivateEndpoint: deps.env?.mcpAllowPrivateEndpoint,
+        });
+        const hasGatewayModel = await deps.prisma.userModelCredential.findFirst({
+          where: { userId: context.actor.userId, provider: VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID },
+          select: { id: true },
+        });
+        return hasGatewayModel
+          ? catalog
+          : catalog.filter((entry) => entry.id !== VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID);
+      }),
       status: authed.voice.status.handler(async ({ context, input }) => {
         const cred = await findDefaultVoiceCredential(deps.prisma, context.actor, input?.scope);
         return toVoiceStatus(cred);
@@ -349,6 +360,9 @@ export function accountRoutes(ctx: RouterContext) {
       }),
       prepare: authed.voice.prepare.handler(async ({ context, input }) =>
         prepareVoice(deps, context.actor, { ...input, signal: context.signal }),
+      ),
+      gatewayModels: authed.voice.gatewayModels.handler(async ({ context, input }) =>
+        listGatewayModels(input.kind, { signal: context.signal }),
       ),
     },
   };

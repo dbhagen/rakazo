@@ -16,6 +16,10 @@ import {
 } from "./openai-compatible-voice.js";
 import { OpenAIVoiceProvider } from "./openai-voice.js";
 import { SCRIPTED_VOICE_CATALOG_ENTRY, ScriptedVoiceProvider } from "./scripted-voice.js";
+import {
+  VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
+  VercelAiGatewayVoiceProvider,
+} from "./vercel-ai-gateway-voice.js";
 
 export const VOICE_CATALOG = [
   {
@@ -46,6 +50,13 @@ export const VOICE_CATALOG = [
     id: OPENAI_COMPATIBLE_VOICE_PROVIDER_ID,
     name: "Self-hosted",
     description: "Any OpenAI-compatible speech server, like Kokoro or Whisper.",
+    transcribe: true,
+  },
+  {
+    id: VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
+    name: "Vercel AI Gateway",
+    description:
+      "ElevenLabs, OpenAI, and Google speech and transcription through your Gateway key.",
     transcribe: true,
   },
 ] as const;
@@ -104,6 +115,8 @@ export function createVoiceProvider(
       return new OpenAiCompatibleVoiceProvider({
         allowPrivateEndpoint: options.allowPrivateEndpoint,
       });
+    case VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID:
+      return new VercelAiGatewayVoiceProvider();
     case MACOS_VOICE_PROVIDER_ID:
       if (!macOsSayAvailable()) break;
       return new MacOsVoiceProvider();
@@ -114,7 +127,7 @@ export function createVoiceProvider(
       break;
   }
   throw new Error(
-    `Unknown voice provider "${kind}". Use elevenlabs | openai | cartesia | fish-audio | openai-compatible.`,
+    `Unknown voice provider "${kind}". Use elevenlabs | openai | cartesia | fish-audio | openai-compatible | vercel-ai-gateway.`,
   );
 }
 
