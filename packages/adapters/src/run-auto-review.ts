@@ -71,11 +71,14 @@ export async function autoReviewCheckerProvider(
     });
   return decisionModel(checker.provider, checker.model)
     ? new DecisionAutoReviewProvider({
-        provider: new HttpDecisionProvider("openrouter", {
-          apiKey: judgeKey.apiKey ?? "",
-          callObserver: judgeKey.callObserver,
-          onUsage,
-        }),
+        provider: new HttpDecisionProvider(
+          checker.provider === "vercel-ai-gateway" ? "vercel-ai-gateway" : "openrouter",
+          {
+            apiKey: judgeKey.apiKey ?? "",
+            callObserver: judgeKey.callObserver,
+            onUsage,
+          },
+        ),
         providerId: checker.provider,
         model: checker.model,
       })
