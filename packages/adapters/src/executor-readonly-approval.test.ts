@@ -724,6 +724,37 @@ it("enqueues pending work when an approval pauses its current run", async () => 
   );
 });
 
+it("hides 'Always allow' on a webhook run's approval, since the rule it would save can never skip it", async () => {
+  const f = fixture({ name: "shell", trigger: "webhook" });
+  await f.run();
+  const card = (
+    f.pauseRunForInput.mock.calls as unknown as [{ blocks: Array<Record<string, unknown>> }][]
+  )[0]?.[0].blocks[0];
+  expect(card).toMatchObject({
+    actions: [
+      { id: "allow", label: "Allow once" },
+      { id: "deny", label: "Deny" },
+    ],
+  });
+});
+
+it("still offers 'Always allow' on a user-triggered run asked under a Space rule", async () => {
+  const f = fixture({
+    rules: [{ effect: "require_approval", matchKind: "tool", matchValue: "demo_get_item" }],
+  });
+  await f.run();
+  const card = (
+    f.pauseRunForInput.mock.calls as unknown as [{ blocks: Array<Record<string, unknown>> }][]
+  )[0]?.[0].blocks[0];
+  expect(card).toMatchObject({
+    actions: [
+      { id: "allow", label: "Allow once" },
+      { id: "always", label: "Always allow this tool" },
+      { id: "deny", label: "Deny" },
+    ],
+  });
+});
+
 describe("disabled builtins", () => {
   it("refuses a direct call before any effect or memory write", async () => {
     const f = fixture({
