@@ -4,6 +4,7 @@ import {
   gatewayVoiceList,
   listGatewayModels,
   parseVercelAiGatewayVoiceSecret,
+  resolveVercelAiGatewayApiKey,
   serializeVercelAiGatewayVoiceSecret,
   VercelAiGatewayVoiceProvider,
   vercelAiGatewayVoiceServer,
@@ -17,15 +18,51 @@ const ctx = {
   signal: new AbortController().signal,
 };
 
-const secret = serializeVercelAiGatewayVoiceSecret({ apiKey: "gw-key" });
+const secret = serializeVercelAiGatewayVoiceSecret({});
 const customSecret = serializeVercelAiGatewayVoiceSecret({
-  apiKey: "gw-key",
   ttsModel: "openai/tts-1",
   sttModel: "openai/whisper-1",
 });
 
-function provider(fetchMock: ReturnType<typeof vi.fn>) {
-  return new VercelAiGatewayVoiceProvider(fetchMock as unknown as typeof fetch);
+/**
+ * A minimal `prisma`/`secretStore` pair that resolves the user's `vercel-ai-gateway` model
+ * connection to `key`, or to nothing when `key` is undefined (simulating a removed
+ * connection). The resolver reads this fresh on every call; nothing here is cached.
+ */
+function gatewayModelDeps(key: string | undefined) {
+  const credential = key
+    ? {
+        id: "model-cred-1",
+        userId: "u",
+        provider: "vercel-ai-gateway",
+        label: "Gateway",
+        secretId: "model-secret-1",
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      }
+    : null;
+  const prisma = {
+    userModelPreference: { findMany: vi.fn().mockResolvedValue([]) },
+    userModelCredential: { findMany: vi.fn().mockResolvedValue(credential ? [credential] : []) },
+    secret: {
+      findFirst: vi
+        .fn()
+        .mockResolvedValue(credential ? { id: "model-secret-1", ciphertext: "cipher" } : null),
+    },
+  };
+  const secretStore = {
+    load: vi.fn().mockResolvedValue(JSON.stringify({ kind: "api_key", key })),
+  };
+  return { prisma, secretStore } as unknown as Parameters<typeof resolveVercelAiGatewayApiKey>[0];
+}
+
+const NO_KEY = Symbol("no gateway model connection");
+
+function provider(fetchMock: ReturnType<typeof vi.fn>, key: string | typeof NO_KEY = "gw-key") {
+  return new VercelAiGatewayVoiceProvider(
+    gatewayModelDeps(key === NO_KEY ? undefined : key),
+    fetchMock as unknown as typeof fetch,
+  );
 }
 
 function calledUrl(fetchMock: ReturnType<typeof vi.fn>, call = 0) {
@@ -39,39 +76,81 @@ function calledInit(fetchMock: ReturnType<typeof vi.fn>, call = 0) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("serializeVercelAiGatewayVoiceSecret / parseVercelAiGatewayVoiceSecret", () => {
-  it("fills the ElevenLabs defaults proven by the bridge", () => {
+  it("fills the ElevenLabs defaults proven by the bridge, and never stores a key", () => {
     expect(parseVercelAiGatewayVoiceSecret(secret)).toEqual({
       kind: "vercel_ai_gateway",
-      apiKey: "gw-key",
       ttsModel: "elevenlabs/eleven-flash-v2.5",
       sttModel: "elevenlabs/scribe-v2",
     });
+    expect(secret).not.toContain("gw-key");
+    expect(JSON.parse(secret)).not.toHaveProperty("apiKey");
   });
 
-  it("requires a key, since there is no separate Gateway voice key field", () => {
-    expect(() => serializeVercelAiGatewayVoiceSecret({ apiKey: "" })).toThrow(
-      "Connect a Vercel AI Gateway model first.",
-    );
+  it("tolerates an old saved secret that still has an apiKey field, ignoring it", () => {
+    const old = JSON.stringify({
+      kind: "vercel_ai_gateway",
+      apiKey: "stale-key",
+      ttsModel: "openai/tts-1",
+      sttModel: "openai/whisper-1",
+    });
+    expect(parseVercelAiGatewayVoiceSecret(old)).toEqual({
+      kind: "vercel_ai_gateway",
+      ttsModel: "openai/tts-1",
+      sttModel: "openai/whisper-1",
+    });
   });
 
   it("rejects model ids that are not plain identifiers", () => {
-    expect(() =>
-      serializeVercelAiGatewayVoiceSecret({ apiKey: "gw-key", ttsModel: "bad\nheader: 1" }),
-    ).toThrow(/Speech model id is not valid/);
+    expect(() => serializeVercelAiGatewayVoiceSecret({ ttsModel: "bad\nheader: 1" })).toThrow(
+      /Speech model id is not valid/,
+    );
   });
 
   it("keeps the previously saved models when blank", () => {
     const again = parseVercelAiGatewayVoiceSecret(
-      serializeVercelAiGatewayVoiceSecret({ apiKey: "gw-key-2" }, customSecret),
+      serializeVercelAiGatewayVoiceSecret({}, customSecret),
     );
     expect(again).toMatchObject({ ttsModel: "openai/tts-1", sttModel: "openai/whisper-1" });
   });
 
-  it("never exposes the key through the server display", () => {
+  it("never exposes a key through the server display", () => {
     expect(vercelAiGatewayVoiceServer(customSecret)).toEqual({
       ttsModel: "openai/tts-1",
       sttModel: "openai/whisper-1",
     });
+  });
+});
+
+describe("resolveVercelAiGatewayApiKey", () => {
+  it("reads the key fresh from the model connection on every call", async () => {
+    const deps = gatewayModelDeps("gw-key-1");
+    expect(await resolveVercelAiGatewayApiKey(deps, ctx)).toBe("gw-key-1");
+  });
+
+  it("picks up a rotated key on the next call without caching the old one", async () => {
+    const deps = gatewayModelDeps("gw-key-1");
+    expect(await resolveVercelAiGatewayApiKey(deps, ctx)).toBe("gw-key-1");
+    (deps as unknown as { secretStore: { load: ReturnType<typeof vi.fn> } }).secretStore.load = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ kind: "api_key", key: "gw-key-2" }));
+    expect(await resolveVercelAiGatewayApiKey(deps, ctx)).toBe("gw-key-2");
+  });
+
+  it("fails clearly when the model connection is gone", async () => {
+    const deps = gatewayModelDeps(undefined);
+    await expect(resolveVercelAiGatewayApiKey(deps, ctx)).rejects.toThrow(
+      "Connect a Vercel AI Gateway model first.",
+    );
+  });
+
+  it("fails clearly when the model connection is not an api_key connection", async () => {
+    const deps = gatewayModelDeps("gw-key-1");
+    (deps as unknown as { secretStore: { load: ReturnType<typeof vi.fn> } }).secretStore.load = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ kind: "oauth", reconnectRequired: true }));
+    await expect(resolveVercelAiGatewayApiKey(deps, ctx)).rejects.toThrow(
+      "Connect a Vercel AI Gateway model first.",
+    );
   });
 });
 
@@ -93,12 +172,18 @@ describe("gatewayVoiceList", () => {
 });
 
 describe("VercelAiGatewayVoiceProvider", () => {
-  it("verify only checks that the saved secret parses; the key was verified by its model connection", async () => {
+  it("verify checks the saved secret parses and that a Gateway model connection exists", async () => {
     const fetchMock = vi.fn();
-    const result = await provider(fetchMock).verify(secret, ctx);
+    const result = await provider(fetchMock, "gw-key").verify(secret, ctx);
     expect(result).toEqual({ ok: true });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(await provider(fetchMock).verify("not json", ctx)).toMatchObject({ ok: false });
+    expect(await provider(fetchMock, "gw-key").verify("not json", ctx)).toMatchObject({
+      ok: false,
+    });
+    expect(await provider(fetchMock, NO_KEY).verify(secret, ctx)).toMatchObject({
+      ok: false,
+      message: "Connect a Vercel AI Gateway model first.",
+    });
   });
 
   it("lists the saved speech model's voices without a network call", async () => {
@@ -108,13 +193,13 @@ describe("VercelAiGatewayVoiceProvider", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("sends the Gateway speech-model request and decodes the base64 audio", async () => {
+  it("sends the Gateway speech-model request with a key read fresh from the model connection", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ audio: Buffer.from([1, 2, 3]).toString("base64") }), {
         status: 200,
       }),
     );
-    const clip = await provider(fetchMock).synthesize(
+    const clip = await provider(fetchMock, "gw-key").synthesize(
       { apiKey: secret, voiceId: "", text: "Hello" },
       ctx,
     );
@@ -132,6 +217,40 @@ describe("VercelAiGatewayVoiceProvider", () => {
       voice: "JBFqnCBsd6RMkjVDRZzb",
       outputFormat: "mp3",
     });
+  });
+
+  it("uses a rotated model-connection key on the very next synthesize call", async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Response(JSON.stringify({ audio: Buffer.from([1]).toString("base64") }), {
+          status: 200,
+        }),
+    );
+    const deps = gatewayModelDeps("gw-key-old");
+    const instance = new VercelAiGatewayVoiceProvider(deps, fetchMock as unknown as typeof fetch);
+    await instance.synthesize({ apiKey: secret, voiceId: "", text: "hi" }, ctx);
+    expect(calledInit(fetchMock, 0).headers).toMatchObject({ authorization: "Bearer gw-key-old" });
+
+    (deps as unknown as { secretStore: { load: ReturnType<typeof vi.fn> } }).secretStore.load = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ kind: "api_key", key: "gw-key-new" }));
+    await instance.synthesize({ apiKey: secret, voiceId: "", text: "hi again" }, ctx);
+    expect(calledInit(fetchMock, 1).headers).toMatchObject({ authorization: "Bearer gw-key-new" });
+  });
+
+  it("fails clearly, without a network call, once the model connection is removed", async () => {
+    const fetchMock = vi.fn();
+    await expect(
+      provider(fetchMock, NO_KEY).synthesize({ apiKey: secret, voiceId: "", text: "hi" }, ctx),
+    ).rejects.toThrow("Connect a Vercel AI Gateway model first.");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(
+      provider(fetchMock, NO_KEY).transcribe(
+        { apiKey: secret, audio: new Uint8Array([1]), mimeType: "audio/wav" },
+        ctx,
+      ),
+    ).rejects.toThrow("Connect a Vercel AI Gateway model first.");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uses the requested voice id over the provider default", async () => {
@@ -205,6 +324,9 @@ describe("VercelAiGatewayVoiceProvider", () => {
       { apiKey: secret, voiceId: "", text: "hi", signal: controller.signal },
       ctx,
     );
+    // Resolving the Gateway key is now async, so give it a turn before the request
+    // starts and the abort listener attaches.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     controller.abort();
     await expect(result).rejects.toThrow();
   });

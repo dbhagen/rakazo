@@ -152,6 +152,7 @@ export async function listDefaultVoices(
     allowPrivateEndpoint:
       credential.provider === OPENAI_COMPATIBLE_VOICE_PROVIDER_ID &&
       deps.mcpAllowPrivateEndpoint === true,
+    gateway: { prisma: deps.prisma, secretStore: deps.secretStore },
   });
   return provider.listVoices(await deps.secretStore.load(secret.ciphertext, secret.id), context);
 }

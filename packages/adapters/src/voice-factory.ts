@@ -16,6 +16,7 @@ import {
 } from "./openai-compatible-voice.js";
 import { OpenAIVoiceProvider } from "./openai-voice.js";
 import { SCRIPTED_VOICE_CATALOG_ENTRY, ScriptedVoiceProvider } from "./scripted-voice.js";
+import type { VercelAiGatewayVoiceDeps } from "./vercel-ai-gateway-voice.js";
 import {
   VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID,
   VercelAiGatewayVoiceProvider,
@@ -100,7 +101,11 @@ export function isVoiceProviderId(value: string): value is VoiceProviderId {
 
 export function createVoiceProvider(
   kind: string,
-  options: { allowPrivateEndpoint?: boolean } = {},
+  options: {
+    allowPrivateEndpoint?: boolean;
+    /** Required for {@link VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID}: reads its key per call. */
+    gateway?: VercelAiGatewayVoiceDeps;
+  } = {},
 ): VoiceProvider {
   switch (kind) {
     case "elevenlabs":
@@ -116,7 +121,10 @@ export function createVoiceProvider(
         allowPrivateEndpoint: options.allowPrivateEndpoint,
       });
     case VERCEL_AI_GATEWAY_VOICE_PROVIDER_ID:
-      return new VercelAiGatewayVoiceProvider();
+      if (!options.gateway) {
+        throw new Error("The Vercel AI Gateway voice provider needs its model-connection deps.");
+      }
+      return new VercelAiGatewayVoiceProvider(options.gateway);
     case MACOS_VOICE_PROVIDER_ID:
       if (!macOsSayAvailable()) break;
       return new MacOsVoiceProvider();
