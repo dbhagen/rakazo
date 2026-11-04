@@ -1532,6 +1532,10 @@ msgstr "验证码"
 msgid "Collapse {0}"
 msgstr "折叠 {0}"
 
+#: src/pages/shell/computer-dock.tsx
+msgid "Collapse the docked chat"
+msgstr ""
+
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Color"
 msgstr "颜色"
@@ -3063,6 +3067,10 @@ msgstr "展开 {0}"
 msgid "Expand table"
 msgstr "展开表格"
 
+#: src/pages/shell/computer-dock.tsx
+msgid "Expand the docked chat"
+msgstr ""
+
 #: src/components/CloudAgentCard.tsx
 msgid "expired"
 msgstr "已过期"
@@ -4369,6 +4377,10 @@ msgstr "还没有成员"
 msgid "No messages with {peerBotName} yet."
 msgstr "还没有与 {peerBotName} 的消息。"
 
+#: src/pages/shell/computer-dock.tsx
+msgid "No messages yet"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "No model catalog is available."
 msgstr "没有可用的模型目录。"
@@ -5350,6 +5362,10 @@ msgstr "调整 Bot 侧边栏大小"
 #: src/pages/ResizableSidePanel.tsx
 msgid "Resize panel"
 msgstr "调整面板大小"
+
+#: src/pages/shell/computer-dock.tsx
+msgid "Resize the docked chat"
+msgstr ""
 
 #: src/pages/model-settings/compatible-model-fields.tsx
 msgid "Responses"
@@ -6829,6 +6845,10 @@ msgstr "使用未导入的文件"
 #: src/pages/shell/import-status.ts
 msgid "Uses paths on your computer"
 msgstr "使用你电脑上的路径"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Uses the key from your Vercel AI Gateway model connection."
+msgstr ""
 
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."

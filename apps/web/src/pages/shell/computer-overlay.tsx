@@ -6,6 +6,7 @@ import type {
   ComputerStatus,
   Run,
   TaughtSkill,
+  ThreadMessage,
 } from "@rakazo/contracts";
 import { BotAvatar, Button } from "@rakazo/ui-web";
 import { X } from "lucide-react";
@@ -16,6 +17,8 @@ import { TeachComputerOverlayControl } from "../../components/teach/TeachCompute
 import { TeachRecordingChrome, TeachStopButton } from "../../components/teach/TeachRecordingChrome";
 import { screenIframeSandbox } from "../../lib/computer-screen";
 import { computerTakeoverBlocked } from "../../lib/thread-events";
+import type { ComputerDockMessageProps } from "./computer-dock";
+import { ComputerDock } from "./computer-dock";
 import { ComputerReleaseActions } from "./computer-release-actions";
 import { computerLabel, DesktopKindEmptyState } from "./computer-view";
 
@@ -37,6 +40,10 @@ type ComputerOverlayProps = {
   screenFrameRef: (frame: HTMLIFrameElement | null) => void;
   computerScreenError: ReactNode;
   computerBooting: ReactNode;
+  /** The active bot thread's messages, newest last; the dock shows the latest few with the chat. */
+  dockMessages: readonly ThreadMessage[];
+  /** Everything the dock's messages need to render interactively, same as the main transcript. */
+  dockMessageProps: ComputerDockMessageProps;
   onStopTeaching: () => void | Promise<void>;
   onStopRun: () => void;
   onRelease: (reason?: ComputerReleaseReason) => Promise<void>;
@@ -64,6 +71,8 @@ export function ComputerOverlay({
   screenFrameRef,
   computerScreenError,
   computerBooting,
+  dockMessages,
+  dockMessageProps,
   onStopTeaching,
   onStopRun,
   onRelease,
@@ -236,6 +245,7 @@ export function ComputerOverlay({
                 ))}
             </div>
           )}
+          <ComputerDock messages={dockMessages} messageProps={dockMessageProps} />
         </div>
       </div>
     </div>

@@ -1493,3 +1493,32 @@ it("answers the page, not an earlier picked message, when the page's reply butto
   expect(onClearReply).toHaveBeenCalledTimes(1);
   expect(container?.querySelector("textarea")?.value).toBe("Mark task 3 done");
 });
+
+it("docks into a claimant other than a page, such as the full-screen computer overlay, and returns to its own slot when that claimant releases it", () => {
+  renderComposer(vi.fn());
+  const session = createPageSession();
+  const overlayDock = document.createElement("div");
+  act(() =>
+    root?.render(
+      <PagesProvider value={{ open: () => {}, session }}>
+        <Composer {...composerProps} />
+      </PagesProvider>,
+    ),
+  );
+  // The composer's one mount moves between its own slot (inside the container) and whichever
+  // element claims the dock, which may sit outside the container entirely.
+  const textarea = () =>
+    container?.querySelector("textarea") ?? overlayDock.querySelector("textarea");
+  expect(overlayDock.contains(textarea())).toBe(false);
+
+  // The computer overlay claims the dock while it is open, outranking the (unclaimed) page slot.
+  const claim = session.dock.claim("computer-overlay");
+  act(() => claim.set(overlayDock));
+  expect(overlayDock.contains(textarea())).toBe(true);
+
+  // Closing the overlay releases its claim; with no page open, the composer returns to its own
+  // slot rather than staying in the released node.
+  act(() => claim.release());
+  expect(overlayDock.contains(textarea())).toBe(false);
+  expect(textarea()).not.toBeNull();
+});

@@ -1532,6 +1532,10 @@ msgstr "인증 코드"
 msgid "Collapse {0}"
 msgstr "{0} 접기"
 
+#: src/pages/shell/computer-dock.tsx
+msgid "Collapse the docked chat"
+msgstr ""
+
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Color"
 msgstr "색상"
@@ -3063,6 +3067,10 @@ msgstr "{0} 펼치기"
 msgid "Expand table"
 msgstr "표 확장"
 
+#: src/pages/shell/computer-dock.tsx
+msgid "Expand the docked chat"
+msgstr ""
+
 #: src/components/CloudAgentCard.tsx
 msgid "expired"
 msgstr "만료됨"
@@ -4369,6 +4377,10 @@ msgstr ""
 msgid "No messages with {peerBotName} yet."
 msgstr "{peerBotName}와의 메시지가 아직 없습니다."
 
+#: src/pages/shell/computer-dock.tsx
+msgid "No messages yet"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "No model catalog is available."
 msgstr "사용 가능한 모델 목록이 없습니다."
@@ -5350,6 +5362,10 @@ msgstr ""
 #: src/pages/ResizableSidePanel.tsx
 msgid "Resize panel"
 msgstr "패널 크기 조절"
+
+#: src/pages/shell/computer-dock.tsx
+msgid "Resize the docked chat"
+msgstr ""
 
 #: src/pages/model-settings/compatible-model-fields.tsx
 msgid "Responses"
@@ -6829,6 +6845,10 @@ msgstr "가져오지 않는 파일을 사용합니다"
 #: src/pages/shell/import-status.ts
 msgid "Uses paths on your computer"
 msgstr "내 컴퓨터의 경로를 사용합니다"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Uses the key from your Vercel AI Gateway model connection."
+msgstr ""
 
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."

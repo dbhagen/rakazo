@@ -1532,6 +1532,10 @@ msgstr "Kod"
 msgid "Collapse {0}"
 msgstr ""
 
+#: src/pages/shell/computer-dock.tsx
+msgid "Collapse the docked chat"
+msgstr ""
+
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Color"
 msgstr "Renk"
@@ -3063,6 +3067,10 @@ msgstr ""
 msgid "Expand table"
 msgstr "Tabloyu genişlet"
 
+#: src/pages/shell/computer-dock.tsx
+msgid "Expand the docked chat"
+msgstr ""
+
 #: src/components/CloudAgentCard.tsx
 msgid "expired"
 msgstr "süresi doldu"
@@ -4369,6 +4377,10 @@ msgstr ""
 msgid "No messages with {peerBotName} yet."
 msgstr "{peerBotName} ile henüz mesaj yok."
 
+#: src/pages/shell/computer-dock.tsx
+msgid "No messages yet"
+msgstr ""
+
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "No model catalog is available."
 msgstr "Kullanılabilir model kataloğu yok."
@@ -5350,6 +5362,10 @@ msgstr ""
 #: src/pages/ResizableSidePanel.tsx
 msgid "Resize panel"
 msgstr "Paneli yeniden boyutlandır"
+
+#: src/pages/shell/computer-dock.tsx
+msgid "Resize the docked chat"
+msgstr ""
 
 #: src/pages/model-settings/compatible-model-fields.tsx
 msgid "Responses"
@@ -6829,6 +6845,10 @@ msgstr "İçe aktarılmayan dosyaları kullanır"
 #: src/pages/shell/import-status.ts
 msgid "Uses paths on your computer"
 msgstr "Bilgisayarınızdaki yolları kullanır"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Uses the key from your Vercel AI Gateway model connection."
+msgstr ""
 
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."

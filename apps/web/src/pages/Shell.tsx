@@ -1335,6 +1335,34 @@ function SpaceShell() {
           screenFrameRef={computerState.setScreenFrame}
           computerScreenError={computerControls.computerScreenError}
           computerBooting={computerControls.computerBooting}
+          // The overlay opens for the active bot's own computer, so the dock follows that
+          // thread; a computer opened for another bot shows no messages rather than the wrong
+          // thread's.
+          dockMessages={computerBot.id === active?.id ? (activeSnapshot?.messages ?? []) : []}
+          dockMessageProps={{
+            artifactTarget: transcriptArtifactTarget,
+            answerableAskIds,
+            dismissableAskIds,
+            onOpenBot: openBot,
+            onOpenPeerMessages: openPeerMessages,
+            onAnswer: composer.answerMessage,
+            memberName: resolveTranscriptMemberName,
+            peerBot: resolveTranscriptBot,
+            onJumpToMessage: jumpToReplyMessage,
+            onRefresh: refreshActiveThread,
+            onBotChanged: refreshBots,
+            onAddRoutine: addSkillRoutine,
+            voiceReady: Boolean(voiceStatus?.ready),
+            speakingMessageId: speakingMessageId ?? undefined,
+            onSpeak: speakMessage,
+            onOpenComputer: computerControls.onOpenComputer,
+            onOpenImportSetup: openImportSetup,
+            rpc,
+            showToolActivity,
+            onReply: replyToMessage,
+            onMarkUnread: markMessageUnread,
+            onReact: composer.reactToMessage,
+          }}
           onStopTeaching={stopTeaching}
           onStopRun={() => void stopRun()}
           onRelease={computerControls.releaseComputer}

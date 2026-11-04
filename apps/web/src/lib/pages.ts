@@ -6,7 +6,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -99,14 +101,71 @@ export function usePageDocument(
 type Dock = { node: HTMLElement | null; page: { id: string; title: string } | null };
 
 /**
+ * One element the composer can portal into, claimed by at most one caller at a time: a page, the
+ * full-screen computer overlay, or whatever else needs the one Composer beside it. Claims stack;
+ * the most recently claimed with a node wins, and releasing one falls back to whichever is next.
+ */
+function createDockNodeStack() {
+  const order: string[] = [];
+  const nodes = new Map<string, HTMLElement | null>();
+  const listeners = new Set<() => void>();
+  function notify() {
+    for (const listener of listeners) listener();
+  }
+  function top(): HTMLElement | null {
+    for (let index = order.length - 1; index >= 0; index -= 1) {
+      const id = order[index];
+      const node = id === undefined ? undefined : nodes.get(id);
+      if (node) return node;
+    }
+    return null;
+  }
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    get: top,
+    claim(id: string) {
+      // Re-claiming an id already on the stack (such as the one permanent "page" claim) moves it
+      // to the top again rather than duplicating it.
+      const existing = order.indexOf(id);
+      if (existing !== -1) order.splice(existing, 1);
+      order.push(id);
+      nodes.set(id, null);
+      notify();
+      return {
+        set(node: HTMLElement | null) {
+          if (nodes.get(id) === node) return;
+          nodes.set(id, node);
+          notify();
+        },
+        release() {
+          const wasTop = top() === nodes.get(id) && nodes.get(id) !== null;
+          const index = order.indexOf(id);
+          if (index !== -1) order.splice(index, 1);
+          nodes.delete(id);
+          if (wasTop) notify();
+        },
+      };
+    },
+  };
+}
+export type DockClaim = ReturnType<ReturnType<typeof createDockNodeStack>["claim"]>;
+
+/**
  * One chat's open-page state: what opened the page (for focus), a Share asked for with it, and
  * where the composer docks. Shared by the shell, the open page and the composer through context.
  */
 export function createPageSession() {
   let opener: { element: HTMLElement; ring: boolean } | null = null;
   let shareRequest: string | null = null;
-  let dock: Dock = { node: null, page: null };
-  const dockListeners = new Set<() => void>();
+  let page: { id: string; title: string } | null = null;
+  const nodeStack = createDockNodeStack();
+  // The page's own claim sits at the bottom of the stack for the session's whole life; it is
+  // never released, so a claimant such as the computer overlay falls back to it on release.
+  const pageClaim = nodeStack.claim("page");
+  let dockSnapshot: Dock = { node: null, page: null };
   const replyListeners = new Set<(text: string) => void>();
   return {
     rememberOpener() {
@@ -133,26 +192,31 @@ export function createPageSession() {
     },
     dock: {
       set(next: Partial<Dock>) {
-        const merged = { ...dock, ...next };
-        if (
-          merged.node === dock.node &&
-          merged.page?.title === dock.page?.title &&
-          merged.page?.id === dock.page?.id
-        )
-          return;
-        dock = merged;
-        for (const listener of dockListeners) listener();
+        if ("node" in next) pageClaim.set(next.node ?? null);
+        if ("page" in next) {
+          const nextPage = next.page ?? null;
+          if (nextPage?.id === page?.id && nextPage?.title === page?.title) return;
+          page = nextPage;
+        }
       },
-      subscribe(listener: () => void) {
-        dockListeners.add(listener);
-        return () => dockListeners.delete(listener);
+      subscribe: nodeStack.subscribe,
+      // Cached rather than built fresh each call: useSyncExternalStore needs a stable reference
+      // when nothing has changed, or it re-renders forever.
+      get: (): Dock => {
+        if (dockSnapshot.node !== nodeStack.get() || dockSnapshot.page !== page)
+          dockSnapshot = { node: nodeStack.get(), page };
+        return dockSnapshot;
       },
-      get: () => dock,
+      /**
+       * A claimant other than the page (such as the full-screen computer overlay) takes the one
+       * composer dock while it holds the claim; releasing it falls back to whoever is below.
+       */
+      claim: (id: string) => nodeStack.claim(id),
     },
     /** A page's reply button hands its text to the chat's composer; the user still sends it. */
     offerReply(text: unknown) {
       const clean = pageReplyText(text);
-      if (!clean || !dock.page) return;
+      if (!clean || !page) return;
       for (const listener of replyListeners) listener(clean);
     },
     subscribeReply(listener: (text: string) => void) {
@@ -167,7 +231,7 @@ export function createPageSession() {
       messages: readonly { id: string; blocks: readonly MessageBlock[] }[],
       chosenReplyId?: string,
     ): { text: string; replyToMessageId?: string } {
-      return pageReply(text, messages, dock.page, chosenReplyId);
+      return pageReply(text, messages, page, chosenReplyId);
     },
   };
 }
@@ -188,6 +252,41 @@ const noop: OpenPage = () => {};
 
 export function usePageSession(): PageSession | null {
   return useContext(PagesContext)?.session ?? null;
+}
+
+/**
+ * Claims the chat's one composer dock while `active`, so something other than a page (the
+ * full-screen computer overlay) can host the same Composer; releasing it on close or unmount
+ * falls back to whatever was claiming the dock before, such as an open page.
+ */
+export function useDockClaim(active: boolean, id: string): (node: HTMLElement | null) => void {
+  const session = usePageSession();
+  const claimRef = useRef<DockClaim | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useEffect(() => {
+    if (active) return;
+    claimRef.current?.release();
+    claimRef.current = null;
+  }, [active]);
+  // Cleanup only, so remounting under the same id (StrictMode, fast refresh) doesn't release a
+  // claim another instance of this hook has since taken over.
+  useEffect(
+    () => () => {
+      claimRef.current?.release();
+      claimRef.current = null;
+    },
+    [],
+  );
+  return useCallback(
+    (node: HTMLElement | null) => {
+      if (!session || !activeRef.current) return;
+      // Claimed lazily on the first node, since ref callbacks commit before effects run.
+      claimRef.current ??= session.dock.claim(id);
+      claimRef.current.set(node);
+    },
+    [session, id],
+  );
 }
 
 /** Opens a page by URL, remembering what opened it so focus can go back there. */

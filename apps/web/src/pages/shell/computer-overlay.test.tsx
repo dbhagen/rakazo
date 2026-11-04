@@ -32,6 +32,7 @@ vi.mock("../../components/teach/TeachRecordingChrome", () => ({
   TeachRecordingChrome: () => null,
   TeachStopButton: () => null,
 }));
+vi.mock("./computer-dock", () => ({ ComputerDock: () => null }));
 
 import { ComputerOverlay } from "./computer-overlay";
 
@@ -77,6 +78,8 @@ async function render(state: ComputerStatus["state"], onStart = vi.fn()) {
         screenFrameRef={() => undefined}
         computerScreenError={null}
         computerBooting={null}
+        dockMessages={[]}
+        dockMessageProps={{} as ComponentProps<typeof ComputerOverlay>["dockMessageProps"]}
         onStopTeaching={() => undefined}
         onStopRun={() => undefined}
         onRelease={async () => undefined}
