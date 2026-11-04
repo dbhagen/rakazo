@@ -519,6 +519,17 @@ describe("planActionGate", () => {
       });
     }
 
+    it("asks for a new destination even with a tool-wide always-allow rule, never reaching the backstop", () => {
+      for (const mode of ["auto", "ask"] as const) {
+        expect(gate(mode, { resolved: allowed, trustedWebhook: true, newDestination: true })).toBe(
+          "ask",
+        );
+      }
+      expect(gate("never", { resolved: allowed, trustedWebhook: true, newDestination: true })).toBe(
+        "deny",
+      );
+    });
+
     it("still refuses a deny rule in every mode", () => {
       for (const mode of ["never", "auto", "ask"] as const) {
         expect(gate(mode, { resolved: blocked, trustedWebhook: true })).toBe("deny");

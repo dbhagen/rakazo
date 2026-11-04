@@ -587,9 +587,14 @@ export function planActionGate(input: {
     return input.steerable ? "deny" : "allow";
   }
   if (input.trustedWebhook) {
+    // A new site the run was never given stays gated on the owner, whatever rule covers the
+    // tool: a tool-wide always-allow rule (e.g. web_fetch) was never a choice of this site, and
+    // the backstop judges the bot's own words, never a URL it was not told about.
+    if (input.newDestination) return input.mode === "never" ? "deny" : "ask";
     // A matching always-allow rule is the only way a trusted webhook's call can run without
     // asking, and even then only once the backstop judge passes it on the bot's own words.
-    if (input.resolved.source === "always_allow") return "backstop";
+    if (input.resolved.decision === "allow" && input.resolved.source === "always_allow")
+      return "backstop";
     // No rule covers this call, so the judge never gets to see it: a webhook run is never the
     // owner's own turn, so "never ask" keeps refusing it instead of the blanket allow below.
     return input.mode === "never" ? "deny" : "ask";
