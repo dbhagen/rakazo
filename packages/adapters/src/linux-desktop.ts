@@ -454,6 +454,7 @@ export const BROWSER_POLICY = JSON.stringify({
   AutofillAddressEnabled: false,
   AutofillCreditCardEnabled: false,
   DefaultPopupsSetting: 1,
+  RestoreOnStartup: 1,
 });
 
 /** Managed policy directories for Chromium, Ubuntu's Chromium, Google Chrome, and Brave. */
