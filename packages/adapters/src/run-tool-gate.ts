@@ -78,6 +78,7 @@ import { callMediaTool } from "./run-tools-files.js";
 import { USER_COMPUTER_TOOLS, userComputerGate } from "./run-tools-user-computer.js";
 import { connectorTrustKeys } from "./run-trust.js";
 import { watchFromTool } from "./schedule-tools.js";
+import { argumentGiven } from "./update-bot-patch.js";
 
 export type AppliedEffect = Awaited<ReturnType<typeof recordEffect>>;
 
@@ -271,13 +272,27 @@ export async function gateToolCall(
     );
   // A gated read still fails closed when its review errors, and keeps its approval key.
   const gated = requiresApprovalByDefault || connectorReadGated;
+  // A self-edit of this bot's own name, description or instructions stays mandatory in a
+  // webhook run whatever the trust: it would rewrite the very words the backstop judges
+  // against on a later call in the same run.
+  const selfIdentityWrite =
+    run.trigger === "webhook" &&
+    name === "update_bot" &&
+    !argumentGiven(args.bot_id) &&
+    (argumentGiven(args.name) ||
+      argumentGiven(args.description) ||
+      argumentGiven(args.instructions));
   // A call from a trusted webhook source drops the usual unattended-tool reason: the source
   // itself already stands in for the owner's eyes on this one tool call. Everything else that
-  // would make the call mandatory still does.
+  // would make the call mandatory still does. An unidentified batch action never loses its
+  // mandatory approval this way: the trust covers only the one call the source was trusted
+  // for, never an action the bot could not yet name.
   const requiresMandatoryApproval =
     paying ||
     commandWatch ||
     scheduleNamesNewSite ||
+    selfIdentityWrite ||
+    (trustedWebhook && unidentifiedAction) ||
     (!trustedWebhook && requiresUnattendedApproval) ||
     toolRequiresExplicitApproval(name);
   // Never ask runs everything else: only another owner's connection could have been steered into it.
@@ -301,11 +316,20 @@ export async function gateToolCall(
       ? { ...resolvedRules, decision: "ask" as const }
       : resolvedRules;
   const mode = approvalModeFromPreference(await ctx.trust.loadAutoReviewPreference());
+  // The trust only ever stands in for the one reason it would otherwise be mandatory for
+  // (an unattended-tool call on the trigger alone): a read or safe builtin that never asked
+  // in the first place takes the normal path below, unchanged from an untrusted webhook run.
+  const trustedWebhookLifts = trustedWebhook && requiresUnattendedApproval;
   // A trusted webhook call with a matching always-allow rule still needs the backstop judge
   // (see planActionGate), so the checker below must be resolved for it in every mode, not just
-  // Auto.
+  // Auto. A new destination the run was never given, and an unidentified batch action, never
+  // reach the backstop (see planActionGate and requiresMandatoryApproval above).
   const backstopCandidate =
-    trustedWebhook && !requiresMandatoryApproval && approvalResolved.source === "always_allow";
+    trustedWebhookLifts &&
+    !requiresMandatoryApproval &&
+    siteGate !== "new" &&
+    approvalResolved.decision === "allow" &&
+    approvalResolved.source === "always_allow";
   const reviewable = (mode === "auto" && !requiresMandatoryApproval) || backstopCandidate;
   const injectedReview = reviewable ? deps.autoReview : undefined;
   const reviewSettings = !reviewable || injectedReview ? null : await ctx.trust.loadApprovalModel();
@@ -353,7 +377,7 @@ export async function gateToolCall(
         checkerConfigured,
         newDestination: siteGate === "new",
         purchase: paying,
-        trustedWebhook,
+        trustedWebhook: trustedWebhookLifts,
       });
   // Nobody is there to approve a purchase a webhook run reaches.
   if (paying && run.trigger === "webhook" && plan !== "deny") {

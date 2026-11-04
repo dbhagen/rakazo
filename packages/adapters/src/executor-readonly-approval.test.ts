@@ -309,7 +309,7 @@ function fixture({
   };
   // Turn checkpoints live in external_effects too, but outside the approval fixtures' rows.
   const turnCheckpoints: { idempotencyKey: string; result: string }[] = [];
-  const liveBot = { fleetManagement };
+  const liveBot = { fleetManagement, trustWebhookSources };
   const reviewCredential =
     approvalRole && checkerConnected
       ? {
@@ -639,6 +639,8 @@ function fixture({
     fleetBots,
     instructionState,
     liveBot,
+    liveRun: run,
+    trustedSourceKeys,
     claimedOutsideSteering(value: boolean) {
       outsideSteering = value;
     },
@@ -1000,6 +1002,195 @@ describe("trusted webhook sources", () => {
     expect(request.userTask).not.toContain("WEBHOOK_PAYLOAD_MARKER");
     expect(request.userTask).toBe("Ops Bot\nHandles incident webhooks");
   });
+
+  it("asks on an unidentified batch action even with the batch tool always-allowed", async () => {
+    const f = fixture({
+      name: "COMPOSIO_MULTI_EXECUTE_TOOL",
+      readOnly: undefined,
+      batch: { items: "tools", action: "tool_slug", arguments: "arguments" },
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+      trustedSourceKeys: [cleanSource.sourceKey],
+      rules: [
+        { effect: "always_allow", matchKind: "tool", matchValue: "COMPOSIO_MULTI_EXECUTE_TOOL" },
+      ],
+    });
+    f.setCalls([{ args: { id: "batch", tools: [{ arguments: {} }] }, executionId: "call-1" }]);
+    await f.run();
+    expect(reviewMock).not.toHaveBeenCalled();
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+  });
+
+  it("asks for a new site even with a tool-wide web_fetch rule, never calling the judge", async () => {
+    const f = fixture({
+      builtin: true,
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+      trustedSourceKeys: [cleanSource.sourceKey],
+      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "web_fetch" }],
+    });
+    f.setCalls([
+      {
+        name: "web_fetch",
+        args: { url: "https://unseen.example.com/page" },
+        executionId: "call-1",
+      },
+    ]);
+    await f.run();
+    // A webhook run can never ask for a new site (unchanged upstream behavior), so a new
+    // destination fails closed to a denial here rather than reaching the backstop judge.
+    expect(reviewMock).not.toHaveBeenCalled();
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(f.pauseRunForInput).not.toHaveBeenCalled();
+    expect(f.results).toEqual([
+      { error: "Fetching example.com needs approval, and a webhook run cannot ask." },
+    ]);
+  });
+
+  it("keeps a self update_bot name/description change mandatory on a trusted run", async () => {
+    const f = fixture({
+      name: "update_bot",
+      builtin: true,
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+      trustedSourceKeys: [cleanSource.sourceKey],
+      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "update_bot" }],
+    });
+    f.setCalls([{ args: { name: "New name" }, executionId: "call-1" }]);
+    await f.run();
+    expect(reviewMock).not.toHaveBeenCalled();
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+  });
+
+  it("asks the second call once the source is revoked between two calls in a run", async () => {
+    const f = fixture({
+      name: "demo_send_message",
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+      trustedSourceKeys: [cleanSource.sourceKey],
+      rules: sendAlwaysAllowed,
+    });
+    reviewMock.mockResolvedValue({ decision: "pass", reason: "Matches its job", model: "mock" });
+    f.setCalls([{ args: { text: "first" }, executionId: "call-1" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    f.trustedSourceKeys.length = 0;
+    f.setCalls([{ args: { text: "second" }, executionId: "call-2" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+  });
+
+  it("asks the second call once the bot's toggle is turned off between two calls in a run", async () => {
+    const f = fixture({
+      name: "demo_send_message",
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+      trustedSourceKeys: [cleanSource.sourceKey],
+      rules: sendAlwaysAllowed,
+    });
+    reviewMock.mockResolvedValue({ decision: "pass", reason: "Matches its job", model: "mock" });
+    f.setCalls([{ args: { text: "first" }, executionId: "call-1" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    f.liveBot.trustWebhookSources = false;
+    f.setCalls([{ args: { text: "second" }, executionId: "call-2" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+  });
+
+  it("asks once the run's webhookSource is downgraded mid-run", async () => {
+    const f = fixture({
+      name: "demo_send_message",
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+      trustedSourceKeys: [cleanSource.sourceKey],
+      rules: sendAlwaysAllowed,
+    });
+    reviewMock.mockResolvedValue({ decision: "pass", reason: "Matches its job", model: "mock" });
+    f.setCalls([{ args: { text: "first" }, executionId: "call-1" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    f.liveRun.webhookSource = {
+      ...cleanSource,
+      screen: { verdict: "suspicious", hits: ["later"] },
+    };
+    f.setCalls([{ args: { text: "second" }, executionId: "call-2" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+  });
+
+  it.each(["auto", "ask", "never"] as const)(
+    "runs a read-only connector call on a trusted run exactly like an untrusted webhook run, in %s mode",
+    async (mode) => {
+      const untrusted = fixture({
+        name: "demo_get_item",
+        trigger: "webhook",
+        checkerConnected: mode === "auto",
+        skipApprovals: mode === "never",
+        savedPreference: mode !== "ask",
+      });
+      await untrusted.run();
+      const trusted = fixture({
+        name: "demo_get_item",
+        trigger: "webhook",
+        trustWebhookSources: true,
+        webhookSource: cleanSource,
+        trustedSourceKeys: [cleanSource.sourceKey],
+        checkerConnected: mode === "auto",
+        skipApprovals: mode === "never",
+        savedPreference: mode !== "ask",
+      });
+      await trusted.run();
+      expect(trusted.execute.mock.calls.length).toBe(untrusted.execute.mock.calls.length);
+      expect(trusted.pauseRunForInput.mock.calls.length).toBe(
+        untrusted.pauseRunForInput.mock.calls.length,
+      );
+    },
+  );
+
+  it.each(["auto", "ask", "never"] as const)(
+    "runs a safe builtin on a trusted run exactly like an untrusted webhook run, in %s mode",
+    async (mode) => {
+      const untrusted = fixture({
+        name: "list_fleet",
+        builtin: true,
+        fleetManagement: true,
+        trigger: "webhook",
+        checkerConnected: mode === "auto",
+        skipApprovals: mode === "never",
+        savedPreference: mode !== "ask",
+      });
+      await untrusted.run();
+      const trusted = fixture({
+        name: "list_fleet",
+        builtin: true,
+        fleetManagement: true,
+        trigger: "webhook",
+        trustWebhookSources: true,
+        webhookSource: cleanSource,
+        trustedSourceKeys: [cleanSource.sourceKey],
+        checkerConnected: mode === "auto",
+        skipApprovals: mode === "never",
+        savedPreference: mode !== "ask",
+      });
+      await trusted.run();
+      expect(trusted.execute.mock.calls.length).toBe(untrusted.execute.mock.calls.length);
+      expect(trusted.pauseRunForInput.mock.calls.length).toBe(
+        untrusted.pauseRunForInput.mock.calls.length,
+      );
+    },
+  );
 });
 
 describe("disabled builtins", () => {
