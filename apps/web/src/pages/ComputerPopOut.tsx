@@ -1,7 +1,7 @@
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { ComputerStatus, ThreadMessage, ThreadSnapshot } from "@rakazo/contracts";
-import { newClientId } from "@rakazo/core";
+import { isRetryableError, newClientId } from "@rakazo/core";
 import { Spinner } from "@rakazo/ui-web";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -75,6 +75,22 @@ export function ComputerPopOutPage() {
   }, [botId, rpc, returned]);
 
   const screen = usePopOutComputerScreen(rpc, returned ? undefined : botId);
+
+  // Matches the main window's own keep-awake heartbeat in use-computer.tsx: only while the
+  // computer is running and this window is visible. The main window skips its heartbeat entirely
+  // while a pop-out holds the screen, so this is the only one keeping the computer awake then.
+  useEffect(() => {
+    if (!botId || screen.computerState !== "running") return;
+    const ping = () => {
+      if (document.visibilityState !== "visible") return;
+      void rpc.computer.heartbeat({ botId }).catch((error) => {
+        if (!isRetryableError(error)) window.clearInterval(timer);
+      });
+    };
+    const timer = window.setInterval(ping, 60_000);
+    ping();
+    return () => window.clearInterval(timer);
+  }, [botId, rpc, screen.computerState]);
 
   async function refresh() {
     if (!botId) return;
@@ -218,11 +234,15 @@ function usePopOutComputerScreen(
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [frameKey, setFrameKey] = useState(0);
+  const [computerState, setComputerState] = useState<ComputerStatus["state"] | undefined>(
+    undefined,
+  );
   const reconnected = useRef(false);
 
   useEffect(() => {
     setUrl(null);
     setError(null);
+    setComputerState(undefined);
     reconnected.current = false;
     if (!botId) return;
     let cancelled = false;
@@ -231,6 +251,7 @@ function usePopOutComputerScreen(
         let status: ComputerStatus = await rpc.computer.status({ botId });
         if (status.state !== "running") status = await rpc.computer.boot({ botId });
         if (cancelled) return;
+        setComputerState(status.state);
         if (status.controlHolder !== "user" || status.controlBotId !== botId) {
           await rpc.computer.takeover({ botId });
         }
@@ -290,5 +311,6 @@ function usePopOutComputerScreen(
     error,
     setFrame,
     frameKey,
+    computerState,
   };
 }

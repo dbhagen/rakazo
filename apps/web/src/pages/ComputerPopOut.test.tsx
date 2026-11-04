@@ -32,6 +32,7 @@ const api = vi.hoisted(() => ({
     takeover: vi.fn(async () => ({})),
     screenUrl: vi.fn(async () => ({ url: "https://screen.example/novnc/" })),
     release: vi.fn(async () => ({})),
+    heartbeat: vi.fn(async () => ({})),
   },
 }));
 vi.mock("../lib/rpc", () => ({
@@ -113,4 +114,26 @@ it("closes on a return message, or falls back to a visible notice", async () => 
   expect(window.close).toHaveBeenCalled();
   expect(container.textContent).toContain("Returned to the main window");
   act(() => root.unmount());
+});
+
+it("sends a keep-awake heartbeat for the computer while it's running and visible", async () => {
+  vi.useFakeTimers();
+  Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  const { root } = renderPage();
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  // One ping fires immediately once the computer is known to be running.
+  expect(api.computer.heartbeat).toHaveBeenCalledWith({ botId: "bot-1" });
+  api.computer.heartbeat.mockClear();
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(api.computer.heartbeat).toHaveBeenCalledTimes(1);
+
+  act(() => root.unmount());
+  vi.useRealTimers();
 });

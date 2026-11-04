@@ -279,6 +279,14 @@ export function useComputerState({
   const [popOutState, setPopOutState] = useState<PopOutHostState>("main");
   const popOutStateRef = useRef<PopOutHostState>("main");
   popOutStateRef.current = popOutState;
+  // False only while a fresh host's `query` is still unanswered, so it's unsafe to read a screen
+  // URL of our own (that read can spend a one-time Wuying login code a pop-out still needs).
+  // Starts true: a caller with no pop-out host at all (e.g. a direct test of this hook) never
+  // gates on this, and useComputerControls's host lifecycle flips it false the moment it has a
+  // query out, before any caller could observe the stale `true`.
+  const [popOutSettled, setPopOutSettled] = useState(true);
+  const popOutSettledRef = useRef(true);
+  popOutSettledRef.current = popOutSettled;
 
   function cacheComputerFor(botId: string, patch: Partial<CachedComputer>) {
     const cache = computerCacheRef.current;
@@ -317,7 +325,8 @@ export function useComputerState({
   }
 
   async function refreshComputerScreen(id: string) {
-    if (!computerVisible.current || popOutStateRef.current !== "main") return null;
+    if (!computerVisible.current || popOutStateRef.current !== "main" || !popOutSettledRef.current)
+      return null;
     const request = ++screenRequest.current;
     const issuedState = computerRef.current?.botId === id ? computerRef.current.state : undefined;
     return loadComputerScreen({
@@ -394,6 +403,9 @@ export function useComputerState({
     popOutState,
     setPopOutState,
     popOutStateRef,
+    popOutSettled,
+    setPopOutSettled,
+    popOutSettledRef,
   };
 }
 
@@ -457,6 +469,9 @@ export function useComputerControls({
     refreshComputerScreen,
     popOutState,
     setPopOutState,
+    popOutSettled,
+    setPopOutSettled,
+    popOutSettledRef,
   } = state;
   const [keepComputerRecovery, setKeepComputerRecovery] = useState(false);
   const recoveryHoldTimer = useRef<number | undefined>(undefined);
@@ -497,8 +512,18 @@ export function useComputerControls({
     popOutHostRef.current = null;
     popOutHostBotIdRef.current = popOutVisibleBotId;
     setPopOutState("main");
+    // A fresh host has no memory of a pop-out already open from before it existed; wait for its
+    // `query` to be answered (or for it to settle unanswered) before fetching anything ourselves.
+    // The ref is set directly (not just through the state setter) so any other effect still to
+    // run in this same commit — e.g. the panel's auto-boot effect below — sees it immediately
+    // rather than the stale value its own render closed over.
+    popOutSettledRef.current = false;
+    setPopOutSettled(false);
     if (!popOutVisibleBotId) return;
-    popOutHostRef.current = createPopOutHost(popOutVisibleBotId, setPopOutState);
+    popOutHostRef.current = createPopOutHost(popOutVisibleBotId, setPopOutState, () => {
+      popOutSettledRef.current = true;
+      setPopOutSettled(true);
+    });
   }, [popOutVisibleBotId]);
   useEffect(() => () => popOutHostRef.current?.close(), []);
   // Releases control here once a pop-out claims the screen; "lost" waits for the user to choose,
@@ -509,15 +534,20 @@ export function useComputerControls({
     if (botId && userHoldsComputerControl(computer, botId))
       void releaseComputer().catch(() => undefined);
   }, [popOutState]);
-  // Returning here (from "popped-out" or "lost") re-fetches the screen, as after a reconnect.
+  // Returning here (from "popped-out" or "lost") re-fetches the screen, as after a reconnect; so
+  // does settling with nothing having claimed the screen, since nothing has read it yet.
   const prevPopOutState = useRef<PopOutHostState>("main");
+  const prevPopOutSettled = useRef(false);
   useEffect(() => {
     const botId = computerBot?.id;
-    if (prevPopOutState.current !== "main" && popOutState === "main" && botId) {
+    const returned = prevPopOutState.current !== "main" && popOutState === "main";
+    const settledIntoMain = !prevPopOutSettled.current && popOutSettled && popOutState === "main";
+    if ((returned || settledIntoMain) && botId) {
       void refreshComputerScreen(botId);
     }
     prevPopOutState.current = popOutState;
-  }, [popOutState]);
+    prevPopOutSettled.current = popOutSettled;
+  }, [popOutState, popOutSettled]);
   const requestReturnFromPopOut = useCallback(() => popOutHostRef.current?.requestReturn(), []);
   const reacquireFromPopOut = useCallback(() => popOutHostRef.current?.reacquire(), []);
   const popOutNotice =
@@ -608,8 +638,9 @@ export function useComputerControls({
       return;
     }
     if (!active) return;
-    // A screen a pop-out holds must not be auto-booted or re-read from here.
-    if (popOutState !== "main") return;
+    // A screen a pop-out holds (or might hold, until a fresh host's query settles) must not be
+    // auto-booted or re-read from here.
+    if (popOutState !== "main" || !popOutSettled) return;
     const botId = active.id;
     // Opening the panel is a fresh try at a screen that failed.
     screenAwaitsRetry.current = false;
@@ -634,7 +665,7 @@ export function useComputerControls({
     return () => {
       cancelled = true;
     };
-  }, [panel, active?.id, popOutState]);
+  }, [panel, active?.id, popOutState, popOutSettled]);
 
   useEffect(() => {
     setComputerOpen(false);
@@ -654,7 +685,7 @@ export function useComputerControls({
   // ends, or the open window is left on a stopped computer with nothing to press.
   const computerBlockedByRun = computerTakeoverBlocked(computer, runStatus);
   useEffect(() => {
-    if (computerBlockedByRun || popOutState !== "main") return;
+    if (computerBlockedByRun || popOutState !== "main" || !popOutSettled) return;
     const botId = computer?.botId;
     if (!botId || !computerOpenRef.current || computerBotIdRef.current !== botId) return;
     if (activeBotId.current !== botId) return;
@@ -665,7 +696,7 @@ export function useComputerControls({
       showProgress: true,
       force: true,
     }).catch(() => undefined);
-  }, [computerBlockedByRun, popOutState]);
+  }, [computerBlockedByRun, popOutState, popOutSettled]);
 
   useEffect(() => {
     if (!computerOpen) return;
@@ -684,8 +715,10 @@ export function useComputerControls({
       !heartbeatBotId ||
       computer?.state !== "running" ||
       // A pop-out window keeps its own screen session awake; the main window must not
-      // double-heartbeat a screen it isn't even showing.
-      popOutState !== "main"
+      // double-heartbeat a screen it isn't even showing, nor one it hasn't yet learned a fresh
+      // host's query settled without being claimed.
+      popOutState !== "main" ||
+      !popOutSettled
     )
       return;
     // A computer panel left open in a hidden window must not keep the computer awake.
@@ -698,7 +731,15 @@ export function useComputerControls({
     const timer = window.setInterval(ping, 60_000);
     ping();
     return () => window.clearInterval(timer);
-  }, [panel, computerOpen, computerBot?.id, active?.id, computer?.state, popOutState]);
+  }, [
+    panel,
+    computerOpen,
+    computerBot?.id,
+    active?.id,
+    computer?.state,
+    popOutState,
+    popOutSettled,
+  ]);
 
   /** Open the computer view. Only an explicit Take control asks for the lease. */
   async function openComputer(botId?: string, takeControl = false) {

@@ -21,7 +21,7 @@ vi.mock("../../components/ComputerMaintenanceActions", () => ({
   ComputerMaintenanceActions: () => null,
 }));
 
-import { createPopOutClient } from "../../lib/computer-pop-out-channel";
+import { createPopOutClient, QUERY_SETTLE_MS } from "../../lib/computer-pop-out-channel";
 import type { ComputerControls, ComputerState } from "./use-computer";
 import { useComputerControls, useComputerState } from "./use-computer";
 
@@ -74,6 +74,11 @@ beforeEach(async () => {
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root.render(<Harness />));
+  // The host's own `query` settles here with nothing having claimed the screen, same as a plain
+  // first mount with no pop-out at all.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(QUERY_SETTLE_MS);
+  });
   await act(async () => {
     await state.refreshComputerScreen("bot-1");
   });
@@ -137,4 +142,42 @@ it("shows Reconnect once the pop-out goes quiet, and only re-acquires on click",
   controls.reacquireFromPopOut?.();
   await act(async () => flush());
   expect(controls.popOutState).toBe("main");
+});
+
+it("a fresh host queries for a pop-out already open from before the panel was reopened", async () => {
+  const client = createPopOutClient("bot-1", () => {});
+  await act(async () => flush());
+  expect(controls.popOutState).toBe("popped-out");
+
+  // The overlay closes (unmounting this hook instance, and its host with it) and reopens: a new
+  // host is created with no memory of the still-open pop-out.
+  act(() => root.unmount());
+  const freshContainer = document.createElement("div");
+  document.body.append(freshContainer);
+  root = createRoot(freshContainer);
+  await act(async () => root.render(<Harness />));
+  await act(async () => flush());
+
+  expect(controls.popOutState).toBe("popped-out");
+  expect(screenUrl).not.toHaveBeenCalled();
+  client.close();
+  freshContainer.remove();
+});
+
+it("fetches its own screen once a fresh host settles with no pop-out claiming it", async () => {
+  // A fresh host (e.g. after the overlay was closed and reopened) with no pop-out alive.
+  act(() => root.unmount());
+  const freshContainer = document.createElement("div");
+  document.body.append(freshContainer);
+  root = createRoot(freshContainer);
+  await act(async () => root.render(<Harness />));
+  expect(screenUrl).not.toHaveBeenCalled();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(QUERY_SETTLE_MS);
+  });
+  await act(async () => {
+    await state.refreshComputerScreen("bot-1");
+  });
+  expect(screenUrl).toHaveBeenCalled();
+  freshContainer.remove();
 });

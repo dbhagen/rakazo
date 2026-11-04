@@ -13,13 +13,19 @@
  *   from one still open.
  * - `release`: the pop-out sends this once, on `pagehide` or `beforeunload`, so the main window
  *   does not have to wait out the heartbeat timeout for an orderly close.
+ * - `query`: a newly created host posts this once, since it has no memory of a pop-out from
+ *   before it existed (e.g. the overlay was closed and reopened while the pop-out stayed open). A
+ *   live pop-out answers with `claim`. The host waits `QUERY_SETTLE_MS` for that answer before
+ *   treating the screen as its own to fetch.
  */
 
 export const HEARTBEAT_INTERVAL_MS = 3_000;
 /** Missing this many heartbeats in a row means the pop-out is gone, not just slow. */
 export const HEARTBEAT_TIMEOUT_MS = 10_000;
+/** How long a fresh host waits for `query` to be answered before assuming no pop-out exists. */
+export const QUERY_SETTLE_MS = 400;
 
-export type PopOutMessage = { type: "claim" | "return" | "heartbeat" | "release" };
+export type PopOutMessage = { type: "claim" | "return" | "heartbeat" | "release" | "query" };
 
 export function popOutChannelName(botId: string): string {
   return `rakazo-computer-${botId}`;
@@ -36,7 +42,13 @@ function openChannel(botId: string): BroadcastChannel {
 
 function isPopOutMessage(data: unknown): data is PopOutMessage {
   const type = (data as { type?: unknown } | null)?.type;
-  return type === "claim" || type === "return" || type === "heartbeat" || type === "release";
+  return (
+    type === "claim" ||
+    type === "return" ||
+    type === "heartbeat" ||
+    type === "release" ||
+    type === "query"
+  );
 }
 
 export type PopOutHostState = "main" | "popped-out" | "lost";
@@ -47,17 +59,26 @@ export type PopOutHostState = "main" | "popped-out" | "lost";
  * - "main": nothing popped out; show the live screen here.
  * - "popped-out": a pop-out claimed the screen and is heard from; show the placeholder.
  * - "lost": a pop-out claimed the screen but stopped heartbeating; offer "Reconnect here".
+ *
+ * A fresh host has no memory of a pop-out that was already open before it existed, so it asks
+ * with `query` and gives a live pop-out `QUERY_SETTLE_MS` to answer with `claim` before calling
+ * `onSettled`; a caller fetching its own screen URL must wait for that rather than racing the
+ * pop-out for it. `supportsPopOutChannel()` being false settles immediately, since there is no
+ * channel to ask over.
  */
 export function createPopOutHost(
   botId: string,
   onStateChange: (state: PopOutHostState) => void,
+  onSettled?: () => void,
 ): { requestReturn: () => void; reacquire: () => void; close: () => void } {
   if (!supportsPopOutChannel()) {
+    onSettled?.();
     return { requestReturn: () => {}, reacquire: () => {}, close: () => {} };
   }
   const channel = openChannel(botId);
   let state: PopOutHostState = "main";
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
   function setState(next: PopOutHostState) {
     if (state === next) return;
     state = next;
@@ -67,9 +88,16 @@ export function createPopOutHost(
     clearTimeout(timer);
     timer = setTimeout(() => setState("lost"), HEARTBEAT_TIMEOUT_MS);
   }
+  function settle() {
+    if (settled) return;
+    settled = true;
+    clearTimeout(settleTimer);
+    onSettled?.();
+  }
   channel.onmessage = (event: MessageEvent) => {
     if (!isPopOutMessage(event.data)) return;
     if (event.data.type === "claim") {
+      settle();
       setState("popped-out");
       scheduleTimeout();
     } else if (event.data.type === "heartbeat") {
@@ -81,6 +109,8 @@ export function createPopOutHost(
       setState("main");
     }
   };
+  channel.postMessage({ type: "query" } satisfies PopOutMessage);
+  const settleTimer = setTimeout(settle, QUERY_SETTLE_MS);
   return {
     /** Asks the pop-out to close and hand the screen back; the main window re-fetches on `return`
      * being acknowledged, which here is simply going back to showing the live screen itself. */
@@ -96,6 +126,7 @@ export function createPopOutHost(
     },
     close() {
       clearTimeout(timer);
+      clearTimeout(settleTimer);
       channel.close();
     },
   };
@@ -115,6 +146,10 @@ export function createPopOutClient(botId: string, onReturn: () => void): { close
   channel.onmessage = (event: MessageEvent) => {
     if (!isPopOutMessage(event.data)) return;
     if (event.data.type === "return") onReturn();
+    // A host created after this pop-out (e.g. the overlay was closed and reopened) has no memory
+    // of the claim already in effect; answer its query the same way the initial claim did.
+    else if (event.data.type === "query")
+      channel.postMessage({ type: "claim" } satisfies PopOutMessage);
   };
   function release() {
     channel.postMessage({ type: "release" } satisfies PopOutMessage);

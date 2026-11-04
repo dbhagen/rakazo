@@ -5,6 +5,7 @@ import {
   createPopOutClient,
   createPopOutHost,
   HEARTBEAT_TIMEOUT_MS,
+  QUERY_SETTLE_MS,
   supportsPopOutChannel,
 } from "./computer-pop-out-channel";
 
@@ -98,6 +99,35 @@ describe("pop-out BroadcastChannel protocol", () => {
     // No further transition: the timeout was cleared on release.
     expect(states).toEqual(["popped-out", "main"]);
     client.close();
+    host.close();
+  });
+
+  it("a fresh host learns of a pop-out that was already open by querying for it", async () => {
+    const firstStates: string[] = [];
+    const firstHost = createPopOutHost("bot-6", (state) => firstStates.push(state));
+    const client = createPopOutClient("bot-6", () => {});
+    await flush();
+    expect(firstStates).toEqual(["popped-out"]);
+    // The overlay (and its host) closes while the pop-out stays open.
+    firstHost.close();
+
+    const states: string[] = [];
+    const settled = vi.fn();
+    const host = createPopOutHost("bot-6", (state) => states.push(state), settled);
+    await flush();
+    expect(states).toEqual(["popped-out"]);
+    expect(settled).toHaveBeenCalledOnce();
+    client.close();
+    host.close();
+  });
+
+  it("settles with no pop-out claimed when nothing answers the query", async () => {
+    const settled = vi.fn();
+    const host = createPopOutHost("bot-7", () => {}, settled);
+    expect(settled).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(QUERY_SETTLE_MS);
+    await flush();
+    expect(settled).toHaveBeenCalledOnce();
     host.close();
   });
 });
