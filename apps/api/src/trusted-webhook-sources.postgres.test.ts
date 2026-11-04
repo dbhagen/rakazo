@@ -25,11 +25,8 @@ import {
 } from "@rakazo/db";
 import { MarkdownMemoryStore } from "@rakazo/memory";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  deliverWebhookEvent,
-  genericWebhookSourceIdentity,
-  type WebhookDeps,
-} from "./webhook-inbound.js";
+import type { WebhookDeps } from "./webhook-inbound.js";
+import { deliverWebhookEvent, genericWebhookSourceIdentity } from "./webhook-inbound.js";
 
 // Mirrors apps/api/src/webhook-inbound.test.ts: deliverWebhookEvent has no injectable seam
 // for the classifier itself (screenWebhookDelivery takes only prisma/secretStore), so a clean
@@ -81,7 +78,11 @@ function judgeProvider(decision: "pass" | "ask" | "error"): AutoReviewProvider {
       adapterVersion: "0.1.0",
       capabilities: {},
     }),
-    review: async () => ({ decision, reason: `fixture judge: ${decision}`, model: "fixture/judge" }),
+    review: async () => ({
+      decision,
+      reason: `fixture judge: ${decision}`,
+      model: "fixture/judge",
+    }),
   };
 }
 
@@ -208,7 +209,11 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     return createRunExecutor({
       prisma: app,
       events: createThreadEvents(app),
-      jobs: { enqueue: async () => undefined, cancel: async () => undefined, close: async () => undefined },
+      jobs: {
+        enqueue: async () => undefined,
+        cancel: async () => undefined,
+        close: async () => undefined,
+      },
       sandbox,
       runtime,
       home: new LocalAgentHomeStore(dataDir),
@@ -264,144 +269,165 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     expect(audits[0]).toMatchObject({ metadata: expect.objectContaining({ verdict: "clean" }) });
   });
 
-  it(
-    "runs the untrusted-source → trust → backstop → revoke lifecycle on a bot's shell call",
-    async () => {
-      const identity = await fixture();
-      await allowShellAlways(identity.userId);
+  it("runs the untrusted-source → trust → backstop → revoke lifecycle on a bot's shell call", async () => {
+    const identity = await fixture();
+    await allowShellAlways(identity.userId);
 
-      // 1) Clean delivery, untrusted source: the shell call asks allow/trust_source/deny.
-      vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
-        verdict: "clean",
-        hits: [],
-        model: "vercel-ai-gateway/typesafe-ai/jev",
-        probability: 0.95,
-      });
-      const first = await deliver(identity, CI_PAYLOAD);
-      await runAsTenant(identity.actor, () => makeExecutor().continueRun(first.runId!, "worker-1"));
-      let run = await runAsSystem("test read", () =>
-        app.run.findUniqueOrThrow({ where: { id: first.runId! } }),
-      );
-      expect(run.status).toBe("waiting_input");
-      let card = await askCardFor(first.runId!);
-      expect(card.blocks).toMatchObject([
-        { actions: [{ id: "allow" }, { id: "trust_source" }, { id: "deny" }] },
-      ]);
+    // 1) Clean delivery, untrusted source: the shell call asks allow/trust_source/deny.
+    vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
+      verdict: "clean",
+      hits: [],
+      model: "vercel-ai-gateway/typesafe-ai/jev",
+      probability: 0.95,
+    });
+    const first = await deliver(identity, CI_PAYLOAD);
+    await runAsTenant(identity.actor, () => makeExecutor().continueRun(first.runId!, "worker-1"));
+    let run = await runAsSystem("test read", () =>
+      app.run.findUniqueOrThrow({ where: { id: first.runId! } }),
+    );
+    expect(run.status).toBe("waiting_input");
+    let card = await askCardFor(first.runId!);
+    expect(card.blocks).toMatchObject([
+      { actions: [{ id: "allow" }, { id: "trust_source" }, { id: "deny" }] },
+    ]);
 
-      // 2) Trusting the source approves the effect and creates exactly one trusted row.
-      const events = createThreadEvents(app);
-      const answered = await runAsTenant(identity.actor, () =>
-        events.answerRunInput({
-          spaceId: identity.spaceId,
-          threadId: identity.threadId,
-          runId: first.runId!,
-          messageId: card.id,
-          answeredByUserId: identity.userId,
-          answer: "trust_source",
-        }),
-      );
-      expect(answered).toBe(true);
-      const effect = await runAsSystem("test read", () =>
-        app.externalEffect.findFirstOrThrow({ where: { runId: first.runId!, kind: "shell" } }),
-      );
-      expect(effect.status).toBe("approved");
-      const trusted = await runAsSystem("test read", () =>
+    // 2) Trusting the source approves the effect and creates exactly one trusted row.
+    const events = createThreadEvents(app);
+    const answered = await runAsTenant(identity.actor, () =>
+      events.answerRunInput({
+        spaceId: identity.spaceId,
+        threadId: identity.threadId,
+        runId: first.runId!,
+        messageId: card.id,
+        answeredByUserId: identity.userId,
+        answer: "trust_source",
+      }),
+    );
+    expect(answered).toBe(true);
+    const effect = await runAsSystem("test read", () =>
+      app.externalEffect.findFirstOrThrow({ where: { runId: first.runId!, kind: "shell" } }),
+    );
+    expect(effect.status).toBe("approved");
+    const trusted = await runAsSystem("test read", () =>
+      listTrustedWebhookSources(app, { botId: identity.botId }),
+    );
+    expect(trusted.filter((row) => row.sourceKey === `generic:${identity.botId}`)).toHaveLength(1);
+    // The owner's answer resumes the first run; finish it so the next delivery starts its own
+    // run instead of queueing behind this one.
+    await runAsTenant(identity.actor, () => makeExecutor().continueRun(first.runId!, "worker-1"));
+    run = await runAsSystem("test read", () =>
+      app.run.findUniqueOrThrow({ where: { id: first.runId! } }),
+    );
+    expect(run.status).toBe("completed");
+
+    // 3) A second clean delivery's shell call: judge mocked pass runs unattended.
+    vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
+      verdict: "clean",
+      hits: [],
+      model: "vercel-ai-gateway/typesafe-ai/jev",
+      probability: 0.95,
+    });
+    const second = await deliver(identity, CI_PAYLOAD);
+    expect(second.runId).toBeTruthy();
+    expect(second.runId).not.toBe(first.runId);
+    await runAsTenant(identity.actor, () =>
+      makeExecutor(judgeProvider("pass")).continueRun(second.runId!, "worker-2"),
+    );
+    run = await runAsSystem("test read", () =>
+      app.run.findUniqueOrThrow({ where: { id: second.runId! } }),
+    );
+    expect(run.status).toBe("completed");
+    const passedEffect = await runAsSystem("test read", () =>
+      app.externalEffect.findFirstOrThrow({ where: { runId: second.runId!, kind: "shell" } }),
+    );
+    expect(passedEffect.reviewDecision).toBe("pass");
+    expect(String(passedEffect.reviewReason)).toMatch(/^Trusted source backstop/);
+    const botMessages = await runAsSystem("test read", () =>
+      app.message.findMany({ where: { runId: second.runId!, role: "bot" } }),
+    );
+    const approvalAsks = botMessages.flatMap((message) =>
+      (message.blocks as MessageBlock[]).filter((block) => isApprovalAskBlock(block)),
+    );
+    expect(approvalAsks, `found approval ask block(s): ${JSON.stringify(approvalAsks)}`).toEqual(
+      [],
+    );
+
+    // 4) Same, but the judge is unsure: the call still needs the owner, this time with
+    //    "always" in place of "trust this source" (the owner already trusts the source).
+    vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
+      verdict: "clean",
+      hits: [],
+      model: "vercel-ai-gateway/typesafe-ai/jev",
+      probability: 0.95,
+    });
+    const third = await deliver(identity, CI_PAYLOAD);
+    expect(third.runId).not.toBe(second.runId);
+    await runAsTenant(identity.actor, () =>
+      makeExecutor(judgeProvider("ask")).continueRun(third.runId!, "worker-3"),
+    );
+    run = await runAsSystem("test read", () =>
+      app.run.findUniqueOrThrow({ where: { id: third.runId! } }),
+    );
+    expect(run.status).toBe("waiting_input");
+    card = await askCardFor(third.runId!);
+    expect(card.blocks).toMatchObject([
+      { actions: [{ id: "allow" }, { id: "always" }, { id: "deny" }] },
+    ]);
+    await runAsTenant(identity.actor, () =>
+      events.answerRunInput({
+        spaceId: identity.spaceId,
+        threadId: identity.threadId,
+        runId: third.runId!,
+        messageId: card.id,
+        answeredByUserId: identity.userId,
+        answer: "deny",
+      }),
+    );
+    // Finish the denied run so the next delivery starts its own run.
+    await runAsTenant(identity.actor, () =>
+      makeExecutor(judgeProvider("ask")).continueRun(third.runId!, "worker-3"),
+    );
+    run = await runAsSystem("test read", () =>
+      app.run.findUniqueOrThrow({ where: { id: third.runId! } }),
+    );
+    expect(["completed", "failed", "cancelled"]).toContain(run.status);
+
+    // 5) Revoke the trust, then another clean delivery's shell call asks again.
+    const toRevoke = (
+      await runAsSystem("test read", () =>
         listTrustedWebhookSources(app, { botId: identity.botId }),
-      );
-      expect(trusted.filter((row) => row.sourceKey === `generic:${identity.botId}`)).toHaveLength(1);
-
-      // 3) A second clean delivery's shell call: judge mocked pass runs unattended.
-      vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
-        verdict: "clean",
-        hits: [],
-        model: "vercel-ai-gateway/typesafe-ai/jev",
-        probability: 0.95,
-      });
-      const second = await deliver(identity, CI_PAYLOAD);
-      await runAsTenant(identity.actor, () =>
-        makeExecutor(judgeProvider("pass")).continueRun(second.runId!, "worker-2"),
-      );
-      run = await runAsSystem("test read", () =>
-        app.run.findUniqueOrThrow({ where: { id: second.runId! } }),
-      );
-      expect(run.status).toBe("completed");
-      const passedEffect = await runAsSystem("test read", () =>
-        app.externalEffect.findFirstOrThrow({ where: { runId: second.runId!, kind: "shell" } }),
-      );
-      expect(passedEffect.reviewDecision).toBe("pass");
-      expect(String(passedEffect.reviewReason)).toMatch(/^Trusted source backstop/);
-      const botMessages = await runAsSystem("test read", () =>
-        app.message.findMany({ where: { runId: second.runId!, role: "bot" } }),
-      );
-      const approvalAsks = botMessages.flatMap((message) =>
-        (message.blocks as MessageBlock[]).filter((block) => isApprovalAskBlock(block)),
-      );
-      expect(approvalAsks, `found approval ask block(s): ${JSON.stringify(approvalAsks)}`).toEqual(
-        [],
-      );
-
-      // 4) Same, but the judge is unsure: the call still needs the owner, this time with
-      //    "always" in place of "trust this source" (the owner already trusts the source).
-      vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
-        verdict: "clean",
-        hits: [],
-        model: "vercel-ai-gateway/typesafe-ai/jev",
-        probability: 0.95,
-      });
-      const third = await deliver(identity, CI_PAYLOAD);
-      await runAsTenant(identity.actor, () =>
-        makeExecutor(judgeProvider("ask")).continueRun(third.runId!, "worker-3"),
-      );
-      run = await runAsSystem("test read", () =>
-        app.run.findUniqueOrThrow({ where: { id: third.runId! } }),
-      );
-      expect(run.status).toBe("waiting_input");
-      card = await askCardFor(third.runId!);
-      expect(card.blocks).toMatchObject([
-        { actions: [{ id: "allow" }, { id: "always" }, { id: "deny" }] },
-      ]);
-      await runAsTenant(identity.actor, () =>
-        events.answerRunInput({
-          spaceId: identity.spaceId,
-          threadId: identity.threadId,
-          runId: third.runId!,
-          messageId: card.id,
-          answeredByUserId: identity.userId,
-          answer: "deny",
+      )
+    ).find((row) => row.sourceKey === `generic:${identity.botId}`)!;
+    await runAsSystem("test revoke", () =>
+      revokeTrustedWebhookSource(app, { id: toRevoke.id, botId: identity.botId }),
+    );
+    expect(
+      await runAsSystem("test read", () =>
+        isWebhookSourceTrusted(app, {
+          botId: identity.botId,
+          sourceKey: `generic:${identity.botId}`,
         }),
-      );
+      ),
+    ).toBe(false);
 
-      // 5) Revoke the trust, then another clean delivery's shell call asks again.
-      const toRevoke = (
-        await runAsSystem("test read", () => listTrustedWebhookSources(app, { botId: identity.botId }))
-      ).find((row) => row.sourceKey === `generic:${identity.botId}`)!;
-      await runAsSystem("test revoke", () =>
-        revokeTrustedWebhookSource(app, { id: toRevoke.id, botId: identity.botId }),
-      );
-      expect(
-        await runAsSystem("test read", () =>
-          isWebhookSourceTrusted(app, { botId: identity.botId, sourceKey: `generic:${identity.botId}` }),
-        ),
-      ).toBe(false);
-
-      vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
-        verdict: "clean",
-        hits: [],
-        model: "vercel-ai-gateway/typesafe-ai/jev",
-        probability: 0.95,
-      });
-      const fourth = await deliver(identity, CI_PAYLOAD);
-      await runAsTenant(identity.actor, () => makeExecutor().continueRun(fourth.runId!, "worker-4"));
-      run = await runAsSystem("test read", () =>
-        app.run.findUniqueOrThrow({ where: { id: fourth.runId! } }),
-      );
-      expect(run.status).toBe("waiting_input");
-      card = await askCardFor(fourth.runId!);
-      expect(card.blocks).toMatchObject([
-        { actions: [{ id: "allow" }, { id: "trust_source" }, { id: "deny" }] },
-      ]);
-    },
-  );
+    vi.mocked(screenWebhookDelivery).mockResolvedValueOnce({
+      verdict: "clean",
+      hits: [],
+      model: "vercel-ai-gateway/typesafe-ai/jev",
+      probability: 0.95,
+    });
+    const fourth = await deliver(identity, CI_PAYLOAD);
+    expect(fourth.runId).not.toBe(third.runId);
+    await runAsTenant(identity.actor, () => makeExecutor().continueRun(fourth.runId!, "worker-4"));
+    run = await runAsSystem("test read", () =>
+      app.run.findUniqueOrThrow({ where: { id: fourth.runId! } }),
+    );
+    expect(run.status).toBe("waiting_input");
+    card = await askCardFor(fourth.runId!);
+    expect(card.blocks).toMatchObject([
+      { actions: [{ id: "allow" }, { id: "trust_source" }, { id: "deny" }] },
+    ]);
+  });
 
   it("drops to allow/deny with the toggle off, and skips the screen entirely", async () => {
     const identity = await fixture(false);
@@ -412,9 +438,13 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
       app.run.findUniqueOrThrow({ where: { id: sent.runId! } }),
     );
     expect(run.webhookSource).toMatchObject({ screen: { verdict: "skipped" } });
-    await runAsTenant(identity.actor, () => makeExecutor().continueRun(sent.runId!, "worker-toggle-off"));
+    await runAsTenant(identity.actor, () =>
+      makeExecutor().continueRun(sent.runId!, "worker-toggle-off"),
+    );
     expect(
-      await runAsSystem("test read", () => app.run.findUniqueOrThrow({ where: { id: sent.runId! } })),
+      await runAsSystem("test read", () =>
+        app.run.findUniqueOrThrow({ where: { id: sent.runId! } }),
+      ),
     ).toMatchObject({ status: "waiting_input" });
     const card = await askCardFor(sent.runId!);
     expect(card.blocks).toMatchObject([{ actions: [{ id: "allow" }, { id: "deny" }] }]);
@@ -434,14 +464,23 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     const audits = await runAsSystem("test read", () =>
       app.auditEvent.findMany({ where: { runId: sent.runId!, action: "webhook.screened" } }),
     );
-    expect(audits[0]).toMatchObject({ metadata: expect.objectContaining({ verdict: "suspicious" }) });
-    await runAsTenant(identity.actor, () => makeExecutor().continueRun(sent.runId!, "worker-flagged"));
+    expect(audits[0]).toMatchObject({
+      metadata: expect.objectContaining({ verdict: "suspicious" }),
+    });
+    await runAsTenant(identity.actor, () =>
+      makeExecutor().continueRun(sent.runId!, "worker-flagged"),
+    );
     expect(
-      await runAsSystem("test read", () => app.run.findUniqueOrThrow({ where: { id: sent.runId! } })),
+      await runAsSystem("test read", () =>
+        app.run.findUniqueOrThrow({ where: { id: sent.runId! } }),
+      ),
     ).toMatchObject({ status: "waiting_input" });
     const card = await askCardFor(sent.runId!);
     expect(card.blocks).toMatchObject([
-      { actions: [{ id: "allow" }, { id: "deny" }], detail: expect.stringContaining("instruction_phrasing") },
+      {
+        actions: [{ id: "allow" }, { id: "deny" }],
+        detail: expect.stringContaining("instruction_phrasing"),
+      },
     ]);
   });
 
