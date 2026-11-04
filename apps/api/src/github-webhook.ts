@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { SecretStoreUnavailableError } from "@rakazo/adapter-kit";
 import type { Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
-import type { WebhookDeps, WebhookSecretCache } from "./webhook-inbound.js";
+import type { WebhookDeps, WebhookSecretCache, WebhookSourceIdentity } from "./webhook-inbound.js";
 import {
   deliverWebhookEvent,
   loadWebhookTarget,
@@ -166,6 +166,25 @@ export function githubWebhookPath(botId: string): string {
   return `/api/v1/bots/${botId}/github`;
 }
 
+/** Identity for a github delivery, from signature-verified body fields only. */
+export function githubWebhookSourceIdentity(
+  botId: string,
+  event: string,
+  payload: Record<string, unknown>,
+): WebhookSourceIdentity {
+  const repoFullName = record(payload.repository)?.full_name;
+  const senderLogin = record(payload.sender)?.login;
+  const repo =
+    typeof repoFullName === "string" && repoFullName.trim() ? repoFullName.trim() : "unknown";
+  const sender =
+    typeof senderLogin === "string" && senderLogin.trim() ? senderLogin.trim() : "unknown";
+  return {
+    sourceKey: `github:${botId}:${repo}:${event}:${sender}`,
+    label: `GitHub ${repo} ${event} from ${sender}`,
+    route: "github",
+  };
+}
+
 export function mountGithubWebhookRoute(
   app: Hono,
   deps: WebhookDeps,
@@ -234,6 +253,7 @@ export function mountGithubWebhookRoute(
         source: "github",
         // The signature covers only the body, so key on it: a replay with a fresh delivery id still dedupes.
         idempotencyKey: raw,
+        sourceIdentity: githubWebhookSourceIdentity(target.bot.id, githubEvent, payload),
       }),
     );
   });

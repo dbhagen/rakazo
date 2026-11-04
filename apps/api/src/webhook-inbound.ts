@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import type { JobPublisher, SecretStore } from "@rakazo/adapter-kit";
 import { runContinueJob, SecretStoreUnavailableError } from "@rakazo/adapter-kit";
-import { inboundRoutineModelPin } from "@rakazo/adapters";
-import type { MessageBlock } from "@rakazo/contracts";
+import { inboundRoutineModelPin, screenWebhookDelivery } from "@rakazo/adapters";
+import type { MessageBlock, RunWebhookSource, WebhookSourceScreen } from "@rakazo/contracts";
 import { escapePromptData, inboundRoutineBlock, messageBlockForArtifact } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
+import { recordAuditEvent } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 
 export const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
@@ -42,13 +43,27 @@ export type WebhookTarget = {
     spaceId: string;
     userId: string;
     webhookSecretId: string;
+    trustWebhookSources: boolean;
   };
   threadId: string;
   expected: string;
 };
 
+/** Identifies the sender a webhook delivery came from, computed by the route from
+ * only signature-verified data, so a bot owner can trust it by (botId, sourceKey). */
+export type WebhookSourceIdentity = {
+  sourceKey: string;
+  label: string;
+  route: "generic" | "github";
+};
+
+export function genericWebhookSourceIdentity(botId: string): WebhookSourceIdentity {
+  return { sourceKey: `generic:${botId}`, label: "Webhook (bearer secret)", route: "generic" };
+}
+
 export type InboundTarget = {
-  bot: Pick<WebhookTarget["bot"], "id" | "spaceId" | "userId">;
+  bot: Pick<WebhookTarget["bot"], "id" | "spaceId" | "userId"> &
+    Partial<Pick<WebhookTarget["bot"], "trustWebhookSources">>;
   threadId: string;
 };
 
@@ -196,6 +211,7 @@ export async function loadWebhookTarget(
       spaceId: true,
       userId: true,
       webhookSecretId: true,
+      trustWebhookSources: true,
       thread: { select: { id: true } },
     },
   });
@@ -239,6 +255,7 @@ export async function loadWebhookTarget(
       spaceId: bot.spaceId,
       userId: bot.userId,
       webhookSecretId: bot.webhookSecretId,
+      trustWebhookSources: bot.trustWebhookSources,
     },
     threadId: bot.thread.id,
     expected,
@@ -259,7 +276,7 @@ export function inboundDeliveryClientNonce(
 }
 
 export async function deliverWebhookEvent(
-  deps: Pick<WebhookDeps, "events" | "jobs">,
+  deps: Pick<WebhookDeps, "events" | "jobs"> & Partial<Pick<WebhookDeps, "prisma" | "secrets">>,
   target: InboundTarget,
   input: {
     prompt: string;
@@ -275,6 +292,8 @@ export async function deliverWebhookEvent(
     idempotencyKey?: string;
     /** Messaging wakes share the live chat thread; keep a separate webhook run. */
     allowParallelRun?: boolean;
+    /** Identity of the sender, for webhook and github deliveries; never set for messaging. */
+    sourceIdentity?: WebhookSourceIdentity;
   },
 ) {
   const promptText =
@@ -295,6 +314,15 @@ export async function deliverWebhookEvent(
     ? inboundDeliveryClientNonce(input.source, target.bot.id, input.idempotencyKey)
     : undefined;
   const pin = inboundRoutineModelPin(input.routines);
+
+  // Screening never blocks delivery: any failure here resolves to verdict "error".
+  let webhookSource: RunWebhookSource | undefined;
+  if (input.sourceIdentity) {
+    const screen: WebhookSourceScreen = target.bot.trustWebhookSources
+      ? await screenDelivery(deps, target.bot, promptText)
+      : { verdict: "skipped", hits: [] };
+    webhookSource = { ...input.sourceIdentity, screen };
+  }
 
   const sent = await deps.events.sendUserMessage({
     spaceId: target.bot.spaceId,
@@ -326,5 +354,64 @@ export async function deliverWebhookEvent(
     });
   }
 
+  if (sent.runId && webhookSource) {
+    await recordWebhookSource(deps, target, sent.runId, webhookSource).catch((error) => {
+      getLogger().error("webhook source record error", error);
+    });
+  }
+
   return { ok: true as const, messageId: sent.messageId, runId: sent.runId, seq: sent.seq };
+}
+
+/** Heuristic plus classifier screening; errors never escape, they become verdict "error". */
+async function screenDelivery(
+  deps: Partial<Pick<WebhookDeps, "prisma" | "secrets">>,
+  bot: Pick<WebhookTarget["bot"], "userId" | "spaceId">,
+  promptText: string,
+): Promise<WebhookSourceScreen> {
+  if (!deps.prisma || !deps.secrets) {
+    return { verdict: "error", hits: [], reason: "No decision model available" };
+  }
+  try {
+    return await screenWebhookDelivery(
+      { prisma: deps.prisma, secretStore: deps.secrets },
+      { userId: bot.userId, spaceId: bot.spaceId },
+      promptText,
+    );
+  } catch (error) {
+    getLogger().error("webhook screen error", error);
+    return { verdict: "error", hits: [], reason: "Classifier timed out or failed" };
+  }
+}
+
+/** Persists the screen outcome on the run it ran for, and audits it. Never throws. */
+async function recordWebhookSource(
+  deps: Partial<Pick<WebhookDeps, "prisma">>,
+  target: InboundTarget,
+  runId: string,
+  webhookSource: RunWebhookSource,
+): Promise<void> {
+  if (deps.prisma) {
+    await deps.prisma.run.update({
+      where: { id: runId },
+      data: { webhookSource },
+    });
+  }
+  await recordAuditEvent({
+    action: "webhook.screened",
+    actor: { type: "system", label: "webhook-screen" },
+    spaceId: target.bot.spaceId,
+    runId,
+    threadId: target.threadId,
+    metadata: {
+      runId,
+      botId: target.bot.id,
+      sourceKey: webhookSource.sourceKey,
+      verdict: webhookSource.screen.verdict,
+      hits: webhookSource.screen.hits.join(","),
+      model: webhookSource.screen.model,
+      reason: webhookSource.screen.reason,
+      probability: webhookSource.screen.probability,
+    },
+  });
 }

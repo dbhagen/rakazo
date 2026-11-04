@@ -7,6 +7,7 @@ import type { WebhookDeps, WebhookSecretCache } from "./webhook-inbound.js";
 import {
   deliverWebhookEvent,
   formatWebhookPrompt,
+  genericWebhookSourceIdentity,
   loadWebhookTarget,
   parseWebhookPayload,
   WEBHOOK_MAX_BODY_BYTES,
@@ -21,10 +22,12 @@ export {
 export {
   formatUntrustedDeliveryPayload,
   formatWebhookPrompt,
+  genericWebhookSourceIdentity,
   WEBHOOK_MAX_BODY_BYTES,
   WEBHOOK_SECRET_KIND,
   type WebhookDeps,
   type WebhookEvents,
+  type WebhookSourceIdentity,
   type WebhookTarget,
 } from "./webhook-inbound.js";
 
@@ -96,6 +99,7 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
         routines: webhookRoutines,
         source: "webhook",
         idempotencyKey,
+        sourceIdentity: genericWebhookSourceIdentity(target.bot.id),
       }),
     );
   });
