@@ -27,7 +27,15 @@ export type WebhookEvents = {
       modelId: string;
       thinkingLevel: string | null;
     };
-  }): Promise<{ messageId: string; runId: string | null; seq: number }>;
+    /** Set on a new run at birth; downgrades an already-active run's screen instead. */
+    webhookSource?: RunWebhookSource;
+  }): Promise<{
+    messageId: string;
+    runId: string | null;
+    seq: number;
+    /** False when the message attached to an already-active run instead of starting one. */
+    isNewRun: boolean;
+  }>;
 };
 
 export type WebhookDeps = {
@@ -346,6 +354,7 @@ export async function deliverWebhookEvent(
           },
         }
       : {}),
+    ...(webhookSource ? { webhookSource } : {}),
   });
 
   if (sent.runId) {
@@ -355,8 +364,8 @@ export async function deliverWebhookEvent(
   }
 
   if (sent.runId && webhookSource) {
-    await recordWebhookSource(deps, target, sent.runId, webhookSource).catch((error) => {
-      getLogger().error("webhook source record error", error);
+    await auditWebhookSource(target, sent.runId, sent.isNewRun, webhookSource).catch((error) => {
+      getLogger().error("webhook source audit error", error);
     });
   }
 
@@ -384,19 +393,18 @@ async function screenDelivery(
   }
 }
 
-/** Persists the screen outcome on the run it ran for, and audits it. Never throws. */
-async function recordWebhookSource(
-  deps: Partial<Pick<WebhookDeps, "prisma">>,
+/**
+ * Audits a screened delivery. The run itself already carries the result: a new run is
+ * born with it in the same `sendUserMessage` transaction, and an existing run's screen
+ * can only be downgraded there, never raised by this (later) delivery's own trust. Never
+ * throws: the delivery already happened.
+ */
+async function auditWebhookSource(
   target: InboundTarget,
   runId: string,
+  isNewRun: boolean,
   webhookSource: RunWebhookSource,
 ): Promise<void> {
-  if (deps.prisma) {
-    await deps.prisma.run.update({
-      where: { id: runId },
-      data: { webhookSource },
-    });
-  }
   await recordAuditEvent({
     action: "webhook.screened",
     actor: { type: "system", label: "webhook-screen" },
@@ -412,6 +420,7 @@ async function recordWebhookSource(
       model: webhookSource.screen.model,
       reason: webhookSource.screen.reason,
       probability: webhookSource.screen.probability,
+      attachedToExistingRun: !isNewRun,
     },
   });
 }

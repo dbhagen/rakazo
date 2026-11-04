@@ -81,6 +81,7 @@ describe("team chat bridge", () => {
           runId: null,
           seq: 1,
           taskId: null,
+          isNewRun: false,
         })),
       },
       jobs: { enqueue: vi.fn() },
@@ -232,6 +233,7 @@ describe("team chat bridge", () => {
             runId: null,
             seq: 1,
             taskId: null,
+            isNewRun: false,
           })),
         },
         storeAttachment: vi.fn(async () => {
@@ -319,6 +321,7 @@ describe("team chat bridge", () => {
       runId: null,
       seq: 1,
       taskId: null,
+      isNewRun: false,
     }));
     const storeAttachment = vi.fn(
       async (input: { attachment: { name: string }; clientNonce: string }) => {
@@ -437,6 +440,7 @@ describe("team chat bridge", () => {
         runId: null,
         seq: 1,
         taskId: null,
+        isNewRun: false,
       }));
       const fetchThreadHistory = vi.fn(async () => {
         if (input.history instanceof Error) throw input.history;
@@ -801,6 +805,7 @@ describe("team chat bridge", () => {
       runId: "run-1",
       seq: 1,
       taskId: null,
+      isNewRun: true,
     }));
     const bridge = new TeamChatBridge({
       prisma: {
@@ -2035,7 +2040,7 @@ describe("team chat bridge", () => {
     const secretDeleteMany = vi.fn(async () => ({ count: 0 }));
     const sendUserMessage = vi.fn(async () => {
       await sendGate;
-      return { messageId: "message-1", runId: "run-1", seq: 1, taskId: "task-1" };
+      return { messageId: "message-1", runId: "run-1", seq: 1, taskId: "task-1", isNewRun: true };
     });
     const bridge = new TeamChatBridge({
       prisma: {
@@ -2299,10 +2304,22 @@ describe("team chat bridge", () => {
       async (input: { createRun?: boolean; blocks: MessageBlock[] }) => {
         if (input.createRun === false) {
           transcriptBlocks.push(...input.blocks);
-          return { messageId: "message-visible", seq: 1, taskId: null, runId: null };
+          return {
+            messageId: "message-visible",
+            seq: 1,
+            taskId: null,
+            runId: null,
+            isNewRun: false,
+          };
         }
         runBlocks = input.blocks;
-        return { messageId: "message-prompt", seq: 2, taskId: "task-1", runId: "run-1" };
+        return {
+          messageId: "message-prompt",
+          seq: 2,
+          taskId: "task-1",
+          runId: "run-1",
+          isNewRun: true,
+        };
       },
     );
     const enqueue = vi.fn(async () => undefined);
@@ -2628,6 +2645,7 @@ describe("team chat bridge", () => {
         seq: 1,
         taskId: null,
         runId: null,
+        isNewRun: false,
       }));
       const prisma = {
         artifact: { findMany: vi.fn(async () => []) },
@@ -2829,6 +2847,7 @@ describe("team chat bridge receipt", () => {
       runId: null,
       seq: 1,
       taskId: null,
+      isNewRun: false,
     }));
     const prisma = {
       externalConversation: {

@@ -80,6 +80,7 @@ function createDeps(
     messageId: "msg-1",
     runId: "run-1",
     seq: 3,
+    isNewRun: true,
   }));
   const enqueue = vi.fn(async () => undefined);
   const findRoutines = vi.fn(async () => overrides.routines ?? []);

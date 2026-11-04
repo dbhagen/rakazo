@@ -5,6 +5,7 @@ import type {
   MessageBlock,
   OneTimeCodeTarget,
   ProductEvent,
+  RunWebhookSource,
 } from "@rakazo/contracts";
 import {
   AnalyticsTrigger,
@@ -15,6 +16,7 @@ import {
   loginAnswerValue,
   MessageBlock as MessageBlockSchema,
   normalizeOneTimeCode,
+  RunWebhookSourceSchema,
   ThreadActivityPayloadSchema,
 } from "@rakazo/contracts";
 import {
@@ -317,6 +319,13 @@ export interface SendUserMessageInput {
     modelId: string;
     thinkingLevel: string | null;
   };
+  /**
+   * Set on a new run at birth so the approval gate never reads a null webhookSource for a
+   * run a webhook or GitHub delivery actually started. When the message instead attaches to
+   * an already-active run, its screen can only be downgraded (see `downgradedWebhookSource`),
+   * never raised by a later delivery's trust.
+   */
+  webhookSource?: RunWebhookSource;
 }
 
 export interface SendUserMessageResult {
@@ -324,6 +333,41 @@ export interface SendUserMessageResult {
   seq: number;
   taskId: string | null;
   runId: string | null;
+  /** False when the message attached to an already-active run instead of starting one. */
+  isNewRun: boolean;
+}
+
+/**
+ * The next webhookSource for a run an existing delivery attaches to instead of
+ * starting. A run with no webhookSource (not itself started by a webhook) stays
+ * null: a later delivery cannot grant it trust it never had. Otherwise the
+ * screen can only move towards "suspicious", never back towards "clean": a
+ * matching, clean delivery leaves it unchanged (returns null, meaning "no
+ * update"); anything else (a different source, or a verdict that is not
+ * "clean") merges hits and downgrades the verdict, adding "mixed_sources"
+ * when the source key changed.
+ */
+export function downgradedWebhookSource(
+  existing: Prisma.JsonValue | null | undefined,
+  incoming: RunWebhookSource,
+): RunWebhookSource["screen"] | null {
+  const parsed = RunWebhookSourceSchema.safeParse(existing);
+  if (!parsed.success) return null;
+  const current = parsed.data;
+  const sameSource = current.sourceKey === incoming.sourceKey;
+  if (sameSource && incoming.screen.verdict === "clean") return null;
+  const hits = [
+    ...new Set([
+      ...current.screen.hits,
+      ...incoming.screen.hits,
+      ...(sameSource ? [] : ["mixed_sources"]),
+    ]),
+  ];
+  return {
+    verdict: current.screen.verdict === "clean" ? "suspicious" : current.screen.verdict,
+    hits,
+    reason: "A later delivery into this run was flagged or came from another source",
+  };
 }
 
 export interface RunSecretWriter {
@@ -509,6 +553,7 @@ export async function sendUserMessage(
       seq: message.seq,
       taskId: created?.taskId ?? null,
       runId: run?.id ?? null,
+      isNewRun: created !== null,
     };
   };
   const existing = await replay();
@@ -553,6 +598,7 @@ export async function sendUserMessage(
                 trigger: true,
                 status: true,
                 sourceMessage: { select: { blocks: true } },
+                webhookSource: true,
               },
             })
           : [];
@@ -599,6 +645,9 @@ export async function sendUserMessage(
             trigger: input.trigger,
             clientNonce: input.clientNonce ? `send:${message.id}` : undefined,
             sourceMessageId: message.id,
+            // A run is born with its delivery's screen; the approval gate must never read a
+            // webhook-started run's webhookSource as null because a later update raced it.
+            ...(input.webhookSource ? { webhookSource: input.webhookSource } : {}),
             ...(input.modelPin
               ? {
                   modelProvider: input.modelPin.modelProvider,
@@ -634,6 +683,22 @@ export async function sendUserMessage(
           },
         });
         await tx.message.update({ where: { id: message.id }, data: { runId: busy.id } });
+        // A later delivery can only move an already-active run's screen towards "suspicious",
+        // never grant trust a run never had, so a run with no webhookSource stays null.
+        if (input.webhookSource) {
+          const nextScreen = downgradedWebhookSource(busy.webhookSource, input.webhookSource);
+          if (nextScreen) {
+            await tx.run.update({
+              where: { id: busy.id },
+              data: {
+                webhookSource: {
+                  ...(busy.webhookSource as Record<string, unknown>),
+                  screen: nextScreen,
+                },
+              },
+            });
+          }
+        }
       }
       const event = await appendEventInTransaction(tx, {
         spaceId: input.spaceId,
@@ -672,6 +737,7 @@ export async function sendUserMessage(
     seq: committed.message.seq,
     taskId: committed.task?.id ?? null,
     runId: committed.run?.id ?? committed.busy?.id ?? null,
+    isNewRun: committed.run !== null,
   };
 }
 

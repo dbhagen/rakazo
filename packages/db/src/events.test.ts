@@ -19,6 +19,7 @@ import {
   completedRunBlocks,
   createPendingSteeringRun,
   discardAnsweredSteering,
+  downgradedWebhookSource,
   finalizeComputerControlRelease,
   finalizeRun,
   followThreadEvents,
@@ -3751,7 +3752,13 @@ describe("sendUserMessage", () => {
         fanout,
         analytics,
       ),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: "task-1", runId: "run-1" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: "task-1",
+      runId: "run-1",
+      isNewRun: true,
+    });
 
     expect(tx.run.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3929,7 +3936,13 @@ describe("sendUserMessage", () => {
         prompt: "hello",
         trigger: "follow_up",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-0" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "run-0",
+      isNewRun: false,
+    });
 
     expect(tx.task.create).not.toHaveBeenCalled();
     expect(tx.run.create).not.toHaveBeenCalled();
@@ -4135,7 +4148,13 @@ describe("sendUserMessage", () => {
         prompt: "Check the inbox",
         trigger: "user",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "intro-run" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "intro-run",
+      isNewRun: false,
+    });
 
     expect(tx.run.create).not.toHaveBeenCalled();
     expect(tx.task.create).not.toHaveBeenCalled();
@@ -4188,7 +4207,13 @@ describe("sendUserMessage", () => {
         trigger: "messaging",
         clientNonce: "messaging:slack:handle-1",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "intro-run" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "intro-run",
+      isNewRun: false,
+    });
 
     expect(tx.run.create).not.toHaveBeenCalled();
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
@@ -4246,7 +4271,13 @@ describe("sendUserMessage", () => {
           prompt: "hello",
           trigger: "messaging",
         }),
-      ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-routine" });
+      ).resolves.toEqual({
+        messageId: "message-1",
+        seq: 4,
+        taskId: null,
+        runId: "run-routine",
+        isNewRun: false,
+      });
 
       expect(tx.run.create).not.toHaveBeenCalled();
       // No run on the steering row: the routine never claims it; its continuation does.
@@ -4306,7 +4337,13 @@ describe("sendUserMessage", () => {
         prompt: "hello",
         trigger: "messaging",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-text" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "run-text",
+      isNewRun: false,
+    });
 
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
       data: {
@@ -4423,7 +4460,13 @@ describe("sendUserMessage", () => {
         prompt: "hello",
         trigger: "messaging",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-text" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "run-text",
+      isNewRun: false,
+    });
 
     expect(tx.run.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4440,6 +4483,289 @@ describe("sendUserMessage", () => {
         // Kept so an unclaimed release continues as messaging, never as an owner follow-up.
         originTrigger: "messaging",
       },
+    });
+  });
+
+  const webhookSourceClean = (sourceKey: string) => ({
+    sourceKey,
+    label: "Webhook (bearer secret)",
+    route: "generic" as const,
+    screen: { verdict: "clean" as const, hits: [] },
+  });
+
+  it("starts a new run with its delivery's webhookSource, with no separate run.update", async () => {
+    const tx = {
+      thread: {
+        update: vi
+          .fn()
+          .mockResolvedValueOnce({ nextMessageSeq: 5 })
+          .mockResolvedValueOnce({ nextEventSeq: 9 }),
+      },
+      message: {
+        create: vi.fn().mockResolvedValue({ id: "message-1", seq: 4 }),
+        update: vi.fn(),
+      },
+      task: { create: vi.fn().mockResolvedValue({ id: "task-1" }) },
+      run: {
+        create: vi.fn().mockResolvedValue({ id: "run-1" }),
+        findMany: vi.fn().mockResolvedValue([]),
+        findUnique: vi.fn().mockResolvedValue({ status: "queued" }),
+        update: vi.fn(),
+      },
+      event: {
+        create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+          ...event(data.seq),
+          type: data.type,
+        })),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+
+    const webhookSource = webhookSourceClean("generic:bot-1");
+    await expect(
+      sendUserMessage(prisma, {
+        spaceId: "workspace-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        userId: "user-1",
+        blocks: [{ kind: "text", text: "ping" }],
+        prompt: "ping",
+        trigger: "webhook",
+        webhookSource,
+      }),
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: "task-1",
+      runId: "run-1",
+      isNewRun: true,
+    });
+
+    expect(tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ webhookSource }) }),
+    );
+    // The run is born with its screen; nothing downgrades or otherwise touches a new run.
+    expect(tx.run.update).not.toHaveBeenCalled();
+  });
+
+  describe("attaching a webhook delivery to an already-active run", () => {
+    function activeRunTx(busyWebhookSource: unknown) {
+      return {
+        thread: {
+          update: vi
+            .fn()
+            .mockResolvedValueOnce({ nextMessageSeq: 5 })
+            .mockResolvedValueOnce({ nextEventSeq: 9 }),
+        },
+        message: {
+          create: vi.fn().mockResolvedValue({ id: "message-1", seq: 4 }),
+          update: vi.fn().mockResolvedValue({ id: "message-1" }),
+        },
+        steeringMessage: { create: vi.fn() },
+        task: { create: vi.fn() },
+        run: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: "run-busy",
+              taskId: "task-busy",
+              trigger: "user",
+              webhookSource: busyWebhookSource,
+            },
+          ]),
+          create: vi.fn(),
+          update: vi.fn(),
+          findUnique: vi.fn().mockResolvedValue({ status: "running" }),
+        },
+        event: {
+          create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+            ...event(data.seq),
+            type: data.type,
+          })),
+        },
+      };
+    }
+
+    it("downgrades an existing clean run's screen when a later delivery is suspicious", async () => {
+      const tx = activeRunTx(webhookSourceClean("generic:bot-1"));
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await sendUserMessage(prisma, {
+        spaceId: "workspace-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        userId: "user-1",
+        blocks: [{ kind: "text", text: "ping" }],
+        prompt: "ping",
+        trigger: "webhook",
+        webhookSource: {
+          sourceKey: "generic:bot-1",
+          label: "Webhook (bearer secret)",
+          route: "generic",
+          screen: { verdict: "suspicious", hits: ["instruction_phrasing"] },
+        },
+      });
+
+      expect(tx.run.update).toHaveBeenCalledWith({
+        where: { id: "run-busy" },
+        data: {
+          webhookSource: {
+            sourceKey: "generic:bot-1",
+            label: "Webhook (bearer secret)",
+            route: "generic",
+            screen: {
+              verdict: "suspicious",
+              hits: ["instruction_phrasing"],
+              reason: "A later delivery into this run was flagged or came from another source",
+            },
+          },
+        },
+      });
+    });
+
+    it("downgrades with 'mixed_sources' when a later delivery's sourceKey differs", async () => {
+      const tx = activeRunTx(webhookSourceClean("generic:bot-1"));
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await sendUserMessage(prisma, {
+        spaceId: "workspace-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        userId: "user-1",
+        blocks: [{ kind: "text", text: "ping" }],
+        prompt: "ping",
+        trigger: "webhook",
+        webhookSource: webhookSourceClean("github:bot-1:acme/app:push:octocat"),
+      });
+
+      expect(tx.run.update).toHaveBeenCalledWith({
+        where: { id: "run-busy" },
+        data: {
+          webhookSource: {
+            sourceKey: "generic:bot-1",
+            label: "Webhook (bearer secret)",
+            route: "generic",
+            screen: {
+              verdict: "suspicious",
+              hits: ["mixed_sources"],
+              reason: "A later delivery into this run was flagged or came from another source",
+            },
+          },
+        },
+      });
+    });
+
+    it("leaves a run's screen unchanged for a same-key, clean delivery", async () => {
+      const tx = activeRunTx(webhookSourceClean("generic:bot-1"));
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await sendUserMessage(prisma, {
+        spaceId: "workspace-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        userId: "user-1",
+        blocks: [{ kind: "text", text: "ping" }],
+        prompt: "ping",
+        trigger: "webhook",
+        webhookSource: webhookSourceClean("generic:bot-1"),
+      });
+
+      expect(tx.run.update).not.toHaveBeenCalled();
+    });
+
+    it("leaves a run with no webhookSource null, never granting it trust from a later delivery", async () => {
+      const tx = activeRunTx(null);
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await sendUserMessage(prisma, {
+        spaceId: "workspace-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        userId: "user-1",
+        blocks: [{ kind: "text", text: "ping" }],
+        prompt: "ping",
+        trigger: "webhook",
+        webhookSource: webhookSourceClean("generic:bot-1"),
+      });
+
+      expect(tx.run.update).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("downgradedWebhookSource", () => {
+  const existing = (verdict: "clean" | "suspicious" | "error", hits: string[] = []) => ({
+    sourceKey: "generic:bot-1",
+    label: "Webhook (bearer secret)",
+    route: "generic" as const,
+    screen: { verdict, hits },
+  });
+  const incoming = (sourceKey: string, verdict: "clean" | "suspicious", hits: string[] = []) => ({
+    sourceKey,
+    label: "l",
+    route: "generic" as const,
+    screen: { verdict, hits },
+  });
+
+  it("returns null (no change) for no existing webhookSource", () => {
+    expect(downgradedWebhookSource(null, incoming("generic:bot-1", "clean"))).toBeNull();
+    expect(downgradedWebhookSource(undefined, incoming("generic:bot-1", "clean"))).toBeNull();
+  });
+
+  it("returns null (no change) for a same-key, clean delivery", () => {
+    expect(
+      downgradedWebhookSource(existing("clean"), incoming("generic:bot-1", "clean")),
+    ).toBeNull();
+  });
+
+  it("downgrades clean to suspicious for a same-key, suspicious delivery and merges hits", () => {
+    expect(
+      downgradedWebhookSource(
+        existing("clean", ["role_tag"]),
+        incoming("generic:bot-1", "suspicious", ["instruction_phrasing"]),
+      ),
+    ).toEqual({
+      verdict: "suspicious",
+      hits: ["role_tag", "instruction_phrasing"],
+      reason: "A later delivery into this run was flagged or came from another source",
+    });
+  });
+
+  it("downgrades with mixed_sources for a different sourceKey, even if the delivery is clean", () => {
+    expect(
+      downgradedWebhookSource(existing("clean"), incoming("github:bot-1:a:b:c", "clean")),
+    ).toEqual({
+      verdict: "suspicious",
+      hits: ["mixed_sources"],
+      reason: "A later delivery into this run was flagged or came from another source",
+    });
+  });
+
+  it("never upgrades an already-suspicious run back towards clean", () => {
+    expect(
+      downgradedWebhookSource(
+        existing("suspicious", ["instruction_phrasing"]),
+        incoming("generic:bot-1", "clean"),
+      ),
+    ).toBeNull();
+    expect(
+      downgradedWebhookSource(
+        existing("suspicious", ["instruction_phrasing"]),
+        incoming("github:bot-1:a:b:c", "clean"),
+      ),
+    ).toEqual({
+      verdict: "suspicious",
+      hits: ["instruction_phrasing", "mixed_sources"],
+      reason: "A later delivery into this run was flagged or came from another source",
     });
   });
 });
