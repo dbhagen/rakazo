@@ -4922,6 +4922,10 @@ msgstr "插件提交"
 msgid "Plugins"
 msgstr "插件"
 
+#: src/pages/shell/computer-overlay.tsx
+msgid "Pop out"
+msgstr ""
+
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
 msgstr "在聊天中发布“无变化”"

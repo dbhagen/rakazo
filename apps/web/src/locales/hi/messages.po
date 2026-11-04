@@ -4922,6 +4922,10 @@ msgstr ""
 msgid "Plugins"
 msgstr ""
 
+#: src/pages/shell/computer-overlay.tsx
+msgid "Pop out"
+msgstr ""
+
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
 msgstr "चैट में “कोई बदलाव नहीं” पोस्ट करें"

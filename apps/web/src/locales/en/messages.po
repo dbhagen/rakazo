@@ -4922,6 +4922,10 @@ msgstr "Plugin submissions"
 msgid "Plugins"
 msgstr "Plugins"
 
+#: src/pages/shell/computer-overlay.tsx
+msgid "Pop out"
+msgstr "Pop out"
+
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
 msgstr "Post \"No changes\" in chat"

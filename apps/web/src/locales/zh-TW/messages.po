@@ -4923,6 +4923,10 @@ msgstr ""
 msgid "Plugins"
 msgstr ""
 
+#: src/pages/shell/computer-overlay.tsx
+msgid "Pop out"
+msgstr ""
+
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
 msgstr "在聊天室中傳送「沒有變更」"

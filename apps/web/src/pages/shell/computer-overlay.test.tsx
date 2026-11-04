@@ -125,3 +125,49 @@ it("offers Start for an asleep computer", async () => {
   expect(container.textContent).toContain("Computer is asleep");
   expect(startButton()).toBeDefined();
 });
+
+function popOutButton() {
+  return container.querySelector('[data-testid="computer-pop-out"]');
+}
+
+it("hides Pop out when the caller has no onPopOut, such as without BroadcastChannel", async () => {
+  await render("stopped");
+  expect(popOutButton()).toBeNull();
+});
+
+it("pops out when onPopOut is given", async () => {
+  const onPopOut = vi.fn();
+  await act(async () => {
+    root.render(
+      <ComputerOverlay
+        bot={bot}
+        computer={computer("stopped")}
+        computerViewport={null}
+        recordingSkill={null}
+        teachBusy={false}
+        hasControl={false}
+        composerRunning={false}
+        sending={false}
+        booting={false}
+        sendError={null}
+        embeddedScreenUrl={null}
+        screenFrameRef={() => undefined}
+        computerScreenError={null}
+        computerBooting={null}
+        dockMessages={[]}
+        dockMessageProps={{} as ComponentProps<typeof ComputerOverlay>["dockMessageProps"]}
+        onStopTeaching={() => undefined}
+        onStopRun={() => undefined}
+        onRelease={async () => undefined}
+        onTakeControl={() => undefined}
+        onStart={() => undefined}
+        onRefreshTeaching={async () => undefined}
+        onRefreshComputer={async () => undefined}
+        onClose={() => undefined}
+        onPopOut={onPopOut}
+      />,
+    );
+  });
+  await act(async () => popOutButton()?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  expect(onPopOut).toHaveBeenCalledOnce();
+});

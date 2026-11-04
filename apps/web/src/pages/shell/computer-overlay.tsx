@@ -9,7 +9,7 @@ import type {
   ThreadMessage,
 } from "@rakazo/contracts";
 import { BotAvatar, Button } from "@rakazo/ui-web";
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { ComputerMaintenanceActions } from "../../components/ComputerMaintenanceActions";
 import { TeachCaptureOverlay } from "../../components/teach/TeachCaptureOverlay";
@@ -52,6 +52,9 @@ type ComputerOverlayProps = {
   onRefreshTeaching: () => Promise<void>;
   onRefreshComputer: () => Promise<void>;
   onClose: () => void;
+  /** Opens this bot's computer in its own window; omitted (rather than disabled) when the
+   * browser has no BroadcastChannel, since there would be no way to coordinate the handover. */
+  onPopOut?: () => void;
 };
 
 export function ComputerOverlay({
@@ -81,6 +84,7 @@ export function ComputerOverlay({
   onRefreshTeaching,
   onRefreshComputer,
   onClose,
+  onPopOut,
 }: ComputerOverlayProps) {
   return (
     <div className="fixed inset-0 z-30 bg-background">
@@ -178,6 +182,19 @@ export function ComputerOverlay({
                   await onRefreshComputer();
                 }}
               />
+            ) : null}
+            {onPopOut ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-label={t`Pop out`}
+                data-testid="computer-pop-out"
+                onClick={onPopOut}
+              >
+                <ExternalLink size={16} strokeWidth={1.8} />
+              </Button>
             ) : null}
             <Button
               variant="ghost"
