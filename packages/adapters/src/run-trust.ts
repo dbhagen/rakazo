@@ -70,8 +70,8 @@ export function createRunTrustLoaders(
     messagingChannelRun: boolean;
     sourceMessage: { role: string; blocks: unknown } | null;
     connectedPlugins: readonly { provider: string }[];
-    /** The bot's toggle to let its clean-screened, explicitly trusted webhook sources run
-     * unattended (see loadTrustedWebhook). */
+    /** Unused by loadTrustedWebhook, which re-reads the bot's toggle fresh on every call (see
+     * below): kept so callers' run-start snapshot stays available to the rest of the run. */
     botTrustsWebhookSources: boolean;
   },
 ) {
@@ -84,7 +84,6 @@ export function createRunTrustLoaders(
     messagingChannelRun,
     sourceMessage,
     connectedPlugins,
-    botTrustsWebhookSources,
   } = input;
   // Parsed once: a malformed or missing webhookSource (another piece fills it in, and it may
   // not have run, or a replay may predate it) is never trusted.
@@ -147,17 +146,29 @@ export function createRunTrustLoaders(
   };
   // Whether this run's webhook call may run unattended on the strength of its source alone:
   // the bot opted in, the delivery screened clean, and the owner already trusted this exact
-  // source (not merely the route it came in on). Loaded once per run like the lookups above;
-  // a deny rule or a missing always-allow rule still gates the call beyond this (see
-  // planActionGate's trustedWebhook branch).
-  let trustedWebhookPromise: Promise<boolean> | undefined;
-  const loadTrustedWebhook = () => {
-    trustedWebhookPromise ??= (async () => {
-      if (run.trigger !== "webhook" || !botTrustsWebhookSources) return false;
-      if (!webhookSource || webhookSource.screen.verdict !== "clean") return false;
-      return isWebhookSourceTrusted(deps.prisma, { botId, sourceKey: webhookSource.sourceKey });
-    })();
-    return trustedWebhookPromise;
+  // source (not merely the route it came in on). Never cached: the toggle and the run's
+  // webhookSource can both change mid-run (the owner can flip the toggle, and a later
+  // delivery can downgrade the run's screen), and each is a single-row lookup, so every gated
+  // call re-reads them fresh. A deny rule or a missing always-allow rule still gates the call
+  // beyond this (see planActionGate's trustedWebhook branch).
+  const loadTrustedWebhook = async (): Promise<boolean> => {
+    if (run.trigger !== "webhook") return false;
+    const live = await deps.prisma.bot.findUnique({
+      where: { id: botId },
+      select: { trustWebhookSources: true },
+    });
+    if (!live?.trustWebhookSources) return false;
+    const liveRun = await deps.prisma.run.findUnique({
+      where: { id: runId },
+      select: { webhookSource: true },
+    });
+    const parsed = RunWebhookSourceSchema.safeParse(liveRun?.webhookSource);
+    const liveWebhookSource = parsed.success ? parsed.data : undefined;
+    if (!liveWebhookSource || liveWebhookSource.screen.verdict !== "clean") return false;
+    return isWebhookSourceTrusted(deps.prisma, {
+      botId,
+      sourceKey: liveWebhookSource.sourceKey,
+    });
   };
   let trustedSitesPromise: Promise<Set<string>> | undefined;
   const loadTrustedSites = () => {

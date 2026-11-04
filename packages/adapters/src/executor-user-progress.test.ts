@@ -158,6 +158,7 @@ async function runTurn(
         computer: { id: "computer-1", scope: "dedicated" },
       })),
       findMany: vi.fn(async () => []),
+      findUnique: vi.fn(async () => ({ trustWebhookSources: false })),
     },
     attempt: {
       create: vi.fn(async () => ({ id: "attempt-1" })),
