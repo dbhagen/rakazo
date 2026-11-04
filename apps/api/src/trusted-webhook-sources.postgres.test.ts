@@ -23,7 +23,7 @@ import {
   runAsTenant,
 } from "@rakazo/db";
 import { MarkdownMemoryStore } from "@rakazo/memory";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deliverWebhookEvent,
   genericWebhookSourceIdentity,
@@ -91,6 +91,10 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-trusted-webhook-"));
   });
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   afterAll(async () => {
     installAuditEventStore(undefined);
     if (owner) {
@@ -117,18 +121,20 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
       ),
     );
     spaceIds.push(identity.spaceId, identity.userId);
-    await owner.bot.update({
-      where: { id: identity.botId },
-      data: { trustWebhookSources: toggle },
-    });
-    await owner.deploymentSettings.upsert({
-      where: { id: "default" },
-      create: {
-        id: "default",
-        defaultModelProvider: "openrouter",
-        defaultModelId: "openai/gpt-4o",
-      },
-      update: { defaultModelProvider: "openrouter", defaultModelId: "openai/gpt-4o" },
+    await runAsSystem("trusted webhook fixture", async () => {
+      await owner.bot.update({
+        where: { id: identity.botId },
+        data: { trustWebhookSources: toggle },
+      });
+      await owner.deploymentSettings.upsert({
+        where: { id: "default" },
+        create: {
+          id: "default",
+          defaultModelProvider: "openrouter",
+          defaultModelId: "openai/gpt-4o",
+        },
+        update: { defaultModelProvider: "openrouter", defaultModelId: "openai/gpt-4o" },
+      });
     });
     const actor = { spaceId: identity.spaceId, userId: identity.userId };
     return { ...identity, actor };
@@ -204,16 +210,20 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
   }
 
   async function allowShellAlways(userId: string) {
-    await owner.userActionApprovalRule.create({
-      data: { userId, effect: "always_allow", matchKind: "tool", matchValue: "shell" },
-    });
+    await runAsSystem("trusted webhook fixture", () =>
+      owner.userActionApprovalRule.create({
+        data: { userId, effect: "always_allow", matchKind: "tool", matchValue: "shell" },
+      }),
+    );
   }
 
   async function askCardFor(runId: string) {
-    return app.message.findFirstOrThrow({
-      where: { runId, role: "bot", blocks: { path: ["0", "kind"], equals: "ask" } },
-      orderBy: { seq: "desc" },
-    });
+    return runAsSystem("trusted webhook e2e assertions", () =>
+      app.message.findFirstOrThrow({
+        where: { runId, role: "bot", blocks: { path: ["0", "kind"], equals: "ask" } },
+        orderBy: { seq: "desc" },
+      }),
+    );
   }
 
   it("screens a clean generic delivery and audits it on the new run", async () => {
@@ -307,9 +317,15 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
       expect(passedEffect.reviewDecision).toBe("pass");
       expect(String(passedEffect.reviewReason)).toMatch(/^Trusted source backstop/);
       expect(
-        await app.message.count({
-          where: { runId: second.runId!, role: "bot", blocks: { path: ["0", "kind"], equals: "ask" } },
-        }),
+        await runAsSystem("test read", () =>
+          app.message.count({
+            where: {
+              runId: second.runId!,
+              role: "bot",
+              blocks: { path: ["0", "kind"], equals: "ask" },
+            },
+          }),
+        ),
       ).toBe(0);
 
       // 4) Same, but the judge is unsure: the call still needs the owner, this time with
@@ -386,7 +402,7 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     expect(run.webhookSource).toMatchObject({ screen: { verdict: "skipped" } });
     await runAsTenant(identity.actor, () => makeExecutor().continueRun(sent.runId!, "worker-toggle-off"));
     expect(
-      await app.run.findUniqueOrThrow({ where: { id: sent.runId! } }),
+      await runAsSystem("test read", () => app.run.findUniqueOrThrow({ where: { id: sent.runId! } })),
     ).toMatchObject({ status: "waiting_input" });
     const card = await askCardFor(sent.runId!);
     expect(card.blocks).toMatchObject([{ actions: [{ id: "allow" }, { id: "deny" }] }]);
@@ -407,7 +423,7 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     expect(audits[0]).toMatchObject({ metadata: expect.objectContaining({ verdict: "suspicious" }) });
     await runAsTenant(identity.actor, () => makeExecutor().continueRun(sent.runId!, "worker-flagged"));
     expect(
-      await app.run.findUniqueOrThrow({ where: { id: sent.runId! } }),
+      await runAsSystem("test read", () => app.run.findUniqueOrThrow({ where: { id: sent.runId! } })),
     ).toMatchObject({ status: "waiting_input" });
     const card = await askCardFor(sent.runId!);
     expect(card.blocks).toMatchObject([
