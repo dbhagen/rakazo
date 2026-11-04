@@ -571,12 +571,28 @@ export function planActionGate(input: {
   newDestination?: boolean;
   /** A click that completes a purchase: a person approves it each time, in every mode. */
   purchase?: boolean;
-}): "ask" | "allow" | "judge" | "deny" {
+  /**
+   * A webhook call from a source this bot trusts (see run-trust's loadTrustedWebhook): the
+   * caller has already dropped it from `mandatory` for the usual unattended-tool reason, but
+   * that trust alone never runs a call unattended. An always-allow rule still needs the
+   * backstop judge to confirm the call against the bot's own words before it runs, in every
+   * approval mode; anything else still needs the owner.
+   */
+  trustedWebhook?: boolean;
+}): "ask" | "allow" | "judge" | "backstop" | "deny" {
   if (input.resolved.decision === "deny") return "deny";
   if (input.purchase) return "ask";
   if (input.mandatory) {
     if (input.mode !== "never") return "ask";
     return input.steerable ? "deny" : "allow";
+  }
+  if (input.trustedWebhook) {
+    // A matching always-allow rule is the only way a trusted webhook's call can run without
+    // asking, and even then only once the backstop judge passes it on the bot's own words.
+    if (input.resolved.source === "always_allow") return "backstop";
+    // No rule covers this call, so the judge never gets to see it: a webhook run is never the
+    // owner's own turn, so "never ask" keeps refusing it instead of the blanket allow below.
+    return input.mode === "never" ? "deny" : "ask";
   }
   if (input.mode === "never") return "allow";
   if (input.resolved.decision === "ask") return "ask";
@@ -625,6 +641,8 @@ export function isApprovalAskBlock(block: {
   return (
     actionIds.has("allow") &&
     actionIds.has("deny") &&
-    [...actionIds].every((id) => id === "allow" || id === "always" || id === "deny")
+    [...actionIds].every(
+      (id) => id === "allow" || id === "always" || id === "trust_source" || id === "deny",
+    )
   );
 }

@@ -496,6 +496,60 @@ describe("planActionGate", () => {
     expect(gate("ask", { resolved: allowed, newDestination: true })).toBe("ask");
     expect(gate("never", { newDestination: true })).toBe("allow");
   });
+
+  describe("a trusted webhook call", () => {
+    for (const mode of ["auto", "ask", "never"] as const) {
+      it(`sends an always-allow match to the backstop in ${mode} mode`, () => {
+        expect(gate(mode, { resolved: allowed, trustedWebhook: true })).toBe("backstop");
+        // Whether a checker is configured never changes this: the backstop decides that
+        // itself, by failing closed when it finds none (see run-tool-gate.ts).
+        expect(
+          gate(mode, { resolved: allowed, trustedWebhook: true, checkerConfigured: false }),
+        ).toBe("backstop");
+      });
+
+      it(`asks for a require_approval or default rule in ${mode === "never" ? "every other" : mode} mode`, () => {
+        if (mode === "never") {
+          expect(gate("never", { resolved: asked, trustedWebhook: true })).toBe("deny");
+          expect(gate("never", { resolved: unruled, trustedWebhook: true })).toBe("deny");
+          return;
+        }
+        expect(gate(mode, { resolved: asked, trustedWebhook: true })).toBe("ask");
+        expect(gate(mode, { resolved: unruled, trustedWebhook: true })).toBe("ask");
+      });
+    }
+
+    it("still refuses a deny rule in every mode", () => {
+      for (const mode of ["never", "auto", "ask"] as const) {
+        expect(gate(mode, { resolved: blocked, trustedWebhook: true })).toBe("deny");
+      }
+    });
+
+    it("leaves a mandatory reason other than the unattended trigger ahead of the backstop", () => {
+      // requiresMandatoryApproval still covers commandWatch, scheduleNamesNewSite and
+      // explicit-approval tools for a trusted webhook call (see run-tool-gate.ts); this is
+      // that path, unaffected by trustedWebhook.
+      expect(
+        gate("never", {
+          resolved: allowed,
+          trustedWebhook: true,
+          mandatory: true,
+          steerable: true,
+        }),
+      ).toBe("deny");
+      expect(
+        gate("never", {
+          resolved: allowed,
+          trustedWebhook: true,
+          mandatory: true,
+          steerable: false,
+        }),
+      ).toBe("allow");
+      expect(gate("auto", { resolved: allowed, trustedWebhook: true, mandatory: true })).toBe(
+        "ask",
+      );
+    });
+  });
 });
 
 describe("approval modes from stored preferences", () => {
