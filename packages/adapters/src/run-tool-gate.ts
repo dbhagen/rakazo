@@ -158,8 +158,14 @@ export async function gateToolCall(
   const { replayEffectToolName } = request;
   let { args, effectRequest } = request;
   // This run's webhook call runs unattended only on the strength of its own trusted,
-  // clean-screened source — never on the trigger alone. See loadTrustedWebhook.
-  const trustedWebhook = await ctx.trust.loadTrustedWebhook();
+  // clean-screened source — never on the trigger alone. See loadTrustedWebhook. Live: the
+  // toggle and source it reads can both change mid-run, so the card below reads the same
+  // values, never a run-start snapshot.
+  const {
+    trusted: trustedWebhook,
+    toggle: liveTrustWebhookSources,
+    source: liveWebhookSource,
+  } = await ctx.trust.loadTrustedWebhook();
   const viaConnector = !BUILTIN_AGENT_TOOL_NAMES.has(name);
   // Declared effect of the operation this call dispatches (installed API method and
   // flag). Install config is immutable per route resource, so it cannot drift before
@@ -274,14 +280,14 @@ export async function gateToolCall(
   const gated = requiresApprovalByDefault || connectorReadGated;
   // A self-edit of this bot's own name, description or instructions stays mandatory in a
   // webhook run whatever the trust: it would rewrite the very words the backstop judges
-  // against on a later call in the same run.
+  // against on a later call in the same run. Tested the way parseUpdateBotPatch builds its
+  // patch (key presence, not argumentGiven): a blank or whitespace-only value still counts,
+  // since the patch builder applies it (trimmed) rather than treating it as omitted.
   const selfIdentityWrite =
     run.trigger === "webhook" &&
     name === "update_bot" &&
     !argumentGiven(args.bot_id) &&
-    (argumentGiven(args.name) ||
-      argumentGiven(args.description) ||
-      argumentGiven(args.instructions));
+    (args.name !== undefined || args.description !== undefined || args.instructions !== undefined);
   // A call from a trusted webhook source drops the usual unattended-tool reason: the source
   // itself already stands in for the owner's eyes on this one tool call. Everything else that
   // would make the call mandatory still does. An unidentified batch action never loses its
@@ -573,28 +579,34 @@ export async function gateToolCall(
   // An untrusted webhook call this toggle covers (the only mandatory reason is the unattended
   // trigger itself, so an owned rule or the judge was never in play) offers to trust its
   // source instead of the usual "always allow": clean delivers it, anything else explains why
-  // that offer is withheld rather than silently dropping it.
+  // that offer is withheld rather than silently dropping it. Reads the same live toggle and
+  // source the gate decision just used, never a run-start snapshot. A purchase or a
+  // self-identity write is never offered the trust shortcut: those stay mandatory and explicit
+  // (see approvalActions, which also refuses it on any card that already withholds "always
+  // allow" for one of those reasons).
   const offerTrustSource =
     run.trigger === "webhook" &&
     !trustedWebhook &&
     requiresUnattendedApproval &&
     !commandWatch &&
     !scheduleNamesNewSite &&
+    !paying &&
+    !selfIdentityWrite &&
     !toolRequiresExplicitApproval(name) &&
-    ctx.bot.trustWebhookSources;
-  const webhookSource = ctx.trust.webhookSource;
+    liveTrustWebhookSources;
   const card: ApprovalCard = {
     reviewReason,
     summary: request.fleetSummary,
     batch: connectorTool?.batch,
     allowAlways: !requiresMandatoryApproval,
     ...(offerTrustSource
-      ? webhookSource?.screen.verdict === "clean"
-        ? { trustSource: { label: webhookSource.label } }
+      ? liveWebhookSource?.screen.verdict === "clean"
+        ? { trustSource: { label: liveWebhookSource.label } }
         : {
-            flaggedReason: webhookSource?.screen.hits.length
-              ? webhookSource.screen.hits.join(", ")
-              : (webhookSource?.screen.reason ?? "this delivery's source could not be verified"),
+            flaggedReason: liveWebhookSource?.screen.hits.length
+              ? liveWebhookSource.screen.hits.join(", ")
+              : (liveWebhookSource?.screen.reason ??
+                "this delivery's source could not be verified"),
           }
       : {}),
   };

@@ -370,4 +370,18 @@ describe("approval card arguments", () => {
     if (block.kind !== "ask") throw new Error("expected ask block");
     expect(block.detail?.split("\n")).toContain("to_email: f@example.test");
   });
+
+  it("never offers 'Trust this source' on a card that also withholds 'Always allow'", () => {
+    const block = buildApprovalAskBlock("effect-1", "shell", {}, [], {
+      summary: { title: "Review before shell", lines: ["echo hi"], onceOnly: true },
+      trustSource: { label: "acme/repo webhook" },
+    });
+    expect(block).toMatchObject({
+      kind: "ask",
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
 });

@@ -70,9 +70,6 @@ export function createRunTrustLoaders(
     messagingChannelRun: boolean;
     sourceMessage: { role: string; blocks: unknown } | null;
     connectedPlugins: readonly { provider: string }[];
-    /** Unused by loadTrustedWebhook, which re-reads the bot's toggle fresh on every call (see
-     * below): kept so callers' run-start snapshot stays available to the rest of the run. */
-    botTrustsWebhookSources: boolean;
   },
 ) {
   const {
@@ -85,12 +82,6 @@ export function createRunTrustLoaders(
     sourceMessage,
     connectedPlugins,
   } = input;
-  // Parsed once: a malformed or missing webhookSource (another piece fills it in, and it may
-  // not have run, or a replay may predate it) is never trusted.
-  const webhookSource: RunWebhookSource | undefined = (() => {
-    const parsed = RunWebhookSourceSchema.safeParse(run.webhookSource);
-    return parsed.success ? parsed.data : undefined;
-  })();
   let approvalRulesPromise: Promise<ActionApprovalRule[]> | undefined;
   const loadApprovalRules = () => {
     approvalRulesPromise ??= listApprovalRules(deps.prisma, {
@@ -144,31 +135,41 @@ export function createRunTrustLoaders(
     })();
     return ownerWordsPromise;
   };
-  // Whether this run's webhook call may run unattended on the strength of its source alone:
-  // the bot opted in, the delivery screened clean, and the owner already trusted this exact
-  // source (not merely the route it came in on). Never cached: the toggle and the run's
-  // webhookSource can both change mid-run (the owner can flip the toggle, and a later
-  // delivery can downgrade the run's screen), and each is a single-row lookup, so every gated
-  // call re-reads them fresh. A deny rule or a missing always-allow rule still gates the call
-  // beyond this (see planActionGate's trustedWebhook branch).
-  const loadTrustedWebhook = async (): Promise<boolean> => {
-    if (run.trigger !== "webhook") return false;
+  /**
+   * Whether this run's webhook call may run unattended on the strength of its source alone:
+   * the bot opted in, the delivery screened clean, and the owner already trusted this exact
+   * source (not merely the route it came in on). Never cached: the toggle and the run's
+   * webhookSource can both change mid-run (the owner can flip the toggle, and a later
+   * delivery can downgrade the run's screen), and each is a single-row lookup, so every gated
+   * call re-reads them fresh. A deny rule or a missing always-allow rule still gates the call
+   * beyond this (see planActionGate's trustedWebhook branch). Also hands back the live toggle
+   * and the live, parsed source: the card ("Trust this source" / why it is withheld) must read
+   * the same live state as the gate decision, never a run-start snapshot.
+   */
+  const loadTrustedWebhook = async (): Promise<{
+    trusted: boolean;
+    toggle: boolean;
+    source: RunWebhookSource | undefined;
+  }> => {
+    if (run.trigger !== "webhook") return { trusted: false, toggle: false, source: undefined };
     const live = await deps.prisma.bot.findUnique({
       where: { id: botId },
       select: { trustWebhookSources: true },
     });
-    if (!live?.trustWebhookSources) return false;
+    const toggle = Boolean(live?.trustWebhookSources);
     const liveRun = await deps.prisma.run.findUnique({
       where: { id: runId },
       select: { webhookSource: true },
     });
     const parsed = RunWebhookSourceSchema.safeParse(liveRun?.webhookSource);
-    const liveWebhookSource = parsed.success ? parsed.data : undefined;
-    if (!liveWebhookSource || liveWebhookSource.screen.verdict !== "clean") return false;
-    return isWebhookSourceTrusted(deps.prisma, {
+    const source = parsed.success ? parsed.data : undefined;
+    if (!toggle || !source || source.screen.verdict !== "clean")
+      return { trusted: false, toggle, source };
+    const trusted = await isWebhookSourceTrusted(deps.prisma, {
       botId,
-      sourceKey: liveWebhookSource.sourceKey,
+      sourceKey: source.sourceKey,
     });
+    return { trusted, toggle, source };
   };
   let trustedSitesPromise: Promise<Set<string>> | undefined;
   const loadTrustedSites = () => {
@@ -251,8 +252,5 @@ export function createRunTrustLoaders(
     loadTrustedConnectors,
     receivedOutsideMessage,
     loadTrustedWebhook,
-    /** This run's parsed, validated webhook source, or undefined when there is none or it is
-     * malformed. Synchronous: the row was already loaded with the run. */
-    webhookSource,
   };
 }

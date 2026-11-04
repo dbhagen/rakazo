@@ -964,6 +964,23 @@ describe("trusted webhook sources", () => {
     });
   });
 
+  it("withholds the trust offer once the toggle is flipped off after the run started", async () => {
+    const f = fixture({
+      name: "shell",
+      trigger: "webhook",
+      trustWebhookSources: true,
+      webhookSource: cleanSource,
+    });
+    f.liveBot.trustWebhookSources = false;
+    await f.run();
+    expect(card(f)).toMatchObject({
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
+
   it("treats a revoked source as untrusted, offering to trust it again", async () => {
     const f = fixture({
       name: "shell",
@@ -1066,6 +1083,26 @@ describe("trusted webhook sources", () => {
     expect(f.execute).not.toHaveBeenCalled();
     expect(f.pauseRunForInput).toHaveBeenCalledOnce();
   });
+
+  it.each(["", " "])(
+    "keeps a self update_bot with a blank description %j mandatory on a trusted run",
+    async (description) => {
+      const f = fixture({
+        name: "update_bot",
+        builtin: true,
+        trigger: "webhook",
+        trustWebhookSources: true,
+        webhookSource: cleanSource,
+        trustedSourceKeys: [cleanSource.sourceKey],
+        rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "update_bot" }],
+      });
+      f.setCalls([{ args: { description }, executionId: "call-1" }]);
+      await f.run();
+      expect(reviewMock).not.toHaveBeenCalled();
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+    },
+  );
 
   it("asks the second call once the source is revoked between two calls in a run", async () => {
     const f = fixture({

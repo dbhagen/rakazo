@@ -70,6 +70,7 @@ export function buildApprovalAskBlock(
         allowAlways && !options.summary.onceOnly,
         undefined,
         options,
+        !options.summary.onceOnly,
       ),
     };
   }
@@ -211,15 +212,28 @@ function approvalActions(
   allowAlways: boolean,
   fetchSite: string | undefined,
   options?: { trustSource?: { label: string } },
+  /** False on a card that can never offer "Always allow" for a reason stronger than the
+   * ordinary webhook-trigger one "Trust this source" is meant to stand in for — a onceOnly
+   * summary (a purchase, say) — so "Trust this source" is withheld there too. */
+  allowTrustSource = true,
 ): NonNullable<Extract<MessageBlock, { kind: "ask" }>["actions"]> {
-  if (options?.trustSource) {
+  // An explicit-approval tool never offers "Trust this source": that trust is nothing more
+  // than an always-allow, and this tool can never carry one, whatever ordinary webhook-trigger
+  // reason would otherwise make it eligible.
+  if (toolRequiresExplicitApproval(toolName)) {
+    return [
+      { id: "allow", label: "Allow once" },
+      { id: "deny", label: "Deny" },
+    ];
+  }
+  if (options?.trustSource && allowTrustSource) {
     return [
       { id: "allow", label: "Allow once" },
       { id: "trust_source", label: "Trust this source" },
       { id: "deny", label: "Deny" },
     ];
   }
-  if (toolRequiresExplicitApproval(toolName) || !allowAlways) {
+  if (!allowAlways) {
     return [
       { id: "allow", label: "Allow once" },
       { id: "deny", label: "Deny" },
