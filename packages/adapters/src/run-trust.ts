@@ -1,4 +1,5 @@
-import type { MessageBlock } from "@rakazo/contracts";
+import type { MessageBlock, RunWebhookSource } from "@rakazo/contracts";
+import { RunWebhookSourceSchema } from "@rakazo/contracts";
 import type { ActionApprovalRule } from "@rakazo/core";
 import {
   connectorKindFromToolName,
@@ -7,7 +8,12 @@ import {
   siteAlwaysAllowed,
 } from "@rakazo/core";
 import { sitesInText, urlSite } from "@rakazo/core/egress";
-import { findAutoReviewPreference, listApprovalRules, storedBatchActions } from "@rakazo/db";
+import {
+  findAutoReviewPreference,
+  isWebhookSourceTrusted,
+  listApprovalRules,
+  storedBatchActions,
+} from "@rakazo/db";
 import { boundDirectApprovalDetails, catalogApprovalDetails } from "./approval-effect.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import type { EffectiveModelRole } from "./model-roles.js";
@@ -56,7 +62,7 @@ export function connectorTrustKeys(
 export function createRunTrustLoaders(
   deps: ExecutorDeps,
   input: {
-    run: { userId: string; spaceId: string; trigger: string };
+    run: { userId: string; spaceId: string; trigger: string; webhookSource?: unknown };
     runId: string;
     botId: string;
     taskPrompt: string;
@@ -64,6 +70,9 @@ export function createRunTrustLoaders(
     messagingChannelRun: boolean;
     sourceMessage: { role: string; blocks: unknown } | null;
     connectedPlugins: readonly { provider: string }[];
+    /** The bot's toggle to let its clean-screened, explicitly trusted webhook sources run
+     * unattended (see loadTrustedWebhook). */
+    botTrustsWebhookSources: boolean;
   },
 ) {
   const {
@@ -75,7 +84,14 @@ export function createRunTrustLoaders(
     messagingChannelRun,
     sourceMessage,
     connectedPlugins,
+    botTrustsWebhookSources,
   } = input;
+  // Parsed once: a malformed or missing webhookSource (another piece fills it in, and it may
+  // not have run, or a replay may predate it) is never trusted.
+  const webhookSource: RunWebhookSource | undefined = (() => {
+    const parsed = RunWebhookSourceSchema.safeParse(run.webhookSource);
+    return parsed.success ? parsed.data : undefined;
+  })();
   let approvalRulesPromise: Promise<ActionApprovalRule[]> | undefined;
   const loadApprovalRules = () => {
     approvalRulesPromise ??= listApprovalRules(deps.prisma, {
@@ -128,6 +144,20 @@ export function createRunTrustLoaders(
       return "";
     })();
     return ownerWordsPromise;
+  };
+  // Whether this run's webhook call may run unattended on the strength of its source alone:
+  // the bot opted in, the delivery screened clean, and the owner already trusted this exact
+  // source (not merely the route it came in on). Loaded once per run like the lookups above;
+  // a deny rule or a missing always-allow rule still gates the call beyond this (see
+  // planActionGate's trustedWebhook branch).
+  let trustedWebhookPromise: Promise<boolean> | undefined;
+  const loadTrustedWebhook = () => {
+    trustedWebhookPromise ??= (async () => {
+      if (run.trigger !== "webhook" || !botTrustsWebhookSources) return false;
+      if (!webhookSource || webhookSource.screen.verdict !== "clean") return false;
+      return isWebhookSourceTrusted(deps.prisma, { botId, sourceKey: webhookSource.sourceKey });
+    })();
+    return trustedWebhookPromise;
   };
   let trustedSitesPromise: Promise<Set<string>> | undefined;
   const loadTrustedSites = () => {
@@ -209,5 +239,9 @@ export function createRunTrustLoaders(
     routineNamesNewSite,
     loadTrustedConnectors,
     receivedOutsideMessage,
+    loadTrustedWebhook,
+    /** This run's parsed, validated webhook source, or undefined when there is none or it is
+     * malformed. Synchronous: the row was already loaded with the run. */
+    webhookSource,
   };
 }

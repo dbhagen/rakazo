@@ -87,6 +87,12 @@ type ApprovalCard = {
   batch: ToolBatch | undefined;
   /** False when a rule can never skip this approval, so the card hides "Always allow". */
   allowAlways: boolean;
+  /** An untrusted webhook call this source's clean screen made eligible to trust, so the card
+   * offers "Trust this source" instead of "Always allow this tool". */
+  trustSource?: { label: string };
+  /** Why "Trust this source" is withheld on an untrusted webhook call this toggle covers, but
+   * whose delivery did not screen clean. */
+  flaggedReason?: string;
 };
 
 /** A tool call that passed its approval gate, as tool handlers receive it. */
@@ -131,6 +137,9 @@ type ToolReview = {
   checker: AutoReviewChecker | null | undefined;
   reviewSettings: Awaited<ReturnType<RunTrust["loadApprovalModel"]>> | null;
   memberChecker: boolean;
+  /** A trusted webhook's always-allow rule backstop: judged on the bot's own words only,
+   * never the task prompt, and fails closed (ask) on anything but a clean pass. */
+  backstop: boolean;
 };
 
 /**
@@ -147,6 +156,9 @@ export async function gateToolCall(
     request;
   const { replayEffectToolName } = request;
   let { args, effectRequest } = request;
+  // This run's webhook call runs unattended only on the strength of its own trusted,
+  // clean-screened source — never on the trigger alone. See loadTrustedWebhook.
+  const trustedWebhook = await ctx.trust.loadTrustedWebhook();
   const viaConnector = !BUILTIN_AGENT_TOOL_NAMES.has(name);
   // Declared effect of the operation this call dispatches (installed API method and
   // flag). Install config is immutable per route resource, so it cannot drift before
@@ -259,11 +271,14 @@ export async function gateToolCall(
     );
   // A gated read still fails closed when its review errors, and keeps its approval key.
   const gated = requiresApprovalByDefault || connectorReadGated;
+  // A call from a trusted webhook source drops the usual unattended-tool reason: the source
+  // itself already stands in for the owner's eyes on this one tool call. Everything else that
+  // would make the call mandatory still does.
   const requiresMandatoryApproval =
     paying ||
     commandWatch ||
     scheduleNamesNewSite ||
-    requiresUnattendedApproval ||
+    (!trustedWebhook && requiresUnattendedApproval) ||
     toolRequiresExplicitApproval(name);
   // Never ask runs everything else: only another owner's connection could have been steered into it.
   const guardedInNeverAsk = name === "respond_agent_connection";
@@ -286,7 +301,12 @@ export async function gateToolCall(
       ? { ...resolvedRules, decision: "ask" as const }
       : resolvedRules;
   const mode = approvalModeFromPreference(await ctx.trust.loadAutoReviewPreference());
-  const reviewable = mode === "auto" && !requiresMandatoryApproval;
+  // A trusted webhook call with a matching always-allow rule still needs the backstop judge
+  // (see planActionGate), so the checker below must be resolved for it in every mode, not just
+  // Auto.
+  const backstopCandidate =
+    trustedWebhook && !requiresMandatoryApproval && approvalResolved.source === "always_allow";
+  const reviewable = (mode === "auto" && !requiresMandatoryApproval) || backstopCandidate;
   const injectedReview = reviewable ? deps.autoReview : undefined;
   const reviewSettings = !reviewable || injectedReview ? null : await ctx.trust.loadApprovalModel();
   const memberChecker = reviewSettings?.primarySource === "member";
@@ -333,6 +353,7 @@ export async function gateToolCall(
         checkerConfigured,
         newDestination: siteGate === "new",
         purchase: paying,
+        trustedWebhook,
       });
   // Nobody is there to approve a purchase a webhook run reaches.
   if (paying && run.trigger === "webhook" && plan !== "deny") {
@@ -358,8 +379,10 @@ export async function gateToolCall(
     };
   }
   let reviewReason: string | undefined;
-  let gateDecision: "ask" | "allow" = plan === "ask" ? "ask" : "allow";
-  const needsApprovalEarly = plan === "ask" || plan === "judge";
+  // A backstop with no reviewer to run (checker not configured) fails closed to ask, unlike a
+  // plain judge plan, which is only ever handed out once a checker is confirmed configured.
+  let gateDecision: "ask" | "allow" = plan === "ask" || plan === "backstop" ? "ask" : "allow";
+  const needsApprovalEarly = plan === "ask" || plan === "judge" || plan === "backstop";
   // A resumed approval keeps its key even if "Always allow" changed the policy.
   const usesApprovalKey =
     nextApprovedTool || name === "request_secret" || needsApprovalEarly || gated;
@@ -445,7 +468,7 @@ export async function gateToolCall(
     return { result: { error: DENIED_ACTION_ERROR } };
   }
 
-  const runAutoReview = async () => {
+  const runAutoReview = async (backstop: boolean) => {
     const judged = await reviewToolCall(ctx, {
       name,
       args,
@@ -459,30 +482,40 @@ export async function gateToolCall(
       checker,
       reviewSettings,
       memberChecker,
+      backstop,
     });
     if (!judged) return;
     reviewReason = judged.reason;
     gateDecision = judged.decision;
   };
 
-  if (applied && plan === "judge" && (injectedReview || checker)) {
+  // A duplicate replay of a call already reviewed reuses that verdict instead of asking the
+  // reviewer again; one still pending (no prior verdict stored) reviews it now.
+  const applyPriorOrReview = async (backstop: boolean) => {
+    if (!applied) return;
     if (!applied.duplicate) {
-      await runAutoReview();
-    } else {
-      const priorDecision = applied.effect.reviewDecision;
-      if (priorDecision === "ask" || priorDecision === "error") {
-        reviewReason =
-          typeof applied.effect.reviewReason === "string" ? applied.effect.reviewReason : undefined;
-        gateDecision = "ask";
-      } else if (priorDecision === "pass") {
-        reviewReason =
-          typeof applied.effect.reviewReason === "string" ? applied.effect.reviewReason : undefined;
-        gateDecision = "allow";
-      } else {
-        await runAutoReview();
-      }
+      await runAutoReview(backstop);
+      return;
     }
-  } else if (applied?.duplicate && plan === "ask") {
+    const priorDecision = applied.effect.reviewDecision;
+    if (priorDecision === "ask" || priorDecision === "error") {
+      reviewReason =
+        typeof applied.effect.reviewReason === "string" ? applied.effect.reviewReason : undefined;
+      gateDecision = "ask";
+    } else if (priorDecision === "pass") {
+      reviewReason =
+        typeof applied.effect.reviewReason === "string" ? applied.effect.reviewReason : undefined;
+      gateDecision = "allow";
+    } else {
+      await runAutoReview(backstop);
+    }
+  };
+
+  if (applied && plan === "judge" && (injectedReview || checker)) {
+    await applyPriorOrReview(false);
+  } else if (applied && plan === "backstop" && (injectedReview || checker)) {
+    await applyPriorOrReview(true);
+  } else if (applied?.duplicate && (plan === "ask" || plan === "backstop")) {
     gateDecision = "ask";
   }
   if (context.signal.aborted) return { result: pauseForApproval(ctx) };
@@ -513,11 +546,33 @@ export async function gateToolCall(
     nextApprovedTool,
     bypassApproval: gateDecision === "allow" && gated,
   });
-  const card = {
+  // An untrusted webhook call this toggle covers (the only mandatory reason is the unattended
+  // trigger itself, so an owned rule or the judge was never in play) offers to trust its
+  // source instead of the usual "always allow": clean delivers it, anything else explains why
+  // that offer is withheld rather than silently dropping it.
+  const offerTrustSource =
+    run.trigger === "webhook" &&
+    !trustedWebhook &&
+    requiresUnattendedApproval &&
+    !commandWatch &&
+    !scheduleNamesNewSite &&
+    !toolRequiresExplicitApproval(name) &&
+    ctx.bot.trustWebhookSources;
+  const webhookSource = ctx.trust.webhookSource;
+  const card: ApprovalCard = {
     reviewReason,
     summary: request.fleetSummary,
     batch: connectorTool?.batch,
     allowAlways: !requiresMandatoryApproval,
+    ...(offerTrustSource
+      ? webhookSource?.screen.verdict === "clean"
+        ? { trustSource: { label: webhookSource.label } }
+        : {
+            flaggedReason: webhookSource?.screen.hits.length
+              ? webhookSource.screen.hits.join(", ")
+              : (webhookSource?.screen.reason ?? "this delivery's source could not be verified"),
+          }
+      : {}),
   };
 
   if (applied?.duplicate) {
@@ -756,15 +811,27 @@ async function reviewToolCall(
   review: ToolReview,
 ): Promise<{ reason: string | undefined; decision: "ask" | "allow" } | undefined> {
   const { deps, run, runId, bot, thread, context } = ctx;
-  const { name, args, connectorKind, fetchUrl, gated, applied } = review;
+  const { name, args, connectorKind, fetchUrl, gated, applied, backstop } = review;
   const { injectedReview, checker, reviewSettings, memberChecker } = review;
   if (!injectedReview && !checker && !reviewSettings?.backups.length) return;
   try {
     const botDescription = redactSecrets(`${bot.name}\n${bot.description}`, ctx.secrets);
-    // A new site is judged on the full URL and the owner's own words only: the task
-    // prompt of a webhook or bot-started run carries text someone else wrote.
-    const reviewRequest: AutoReviewRequest =
-      review.newSite && fetchUrl
+    // The backstop judges a trusted webhook's always-allow match on the bot's own words
+    // only, never the task prompt: that prompt is the raw webhook payload, which an
+    // attacker could have written, and this is the last check before the call runs
+    // unattended.
+    const reviewRequest: AutoReviewRequest = backstop
+      ? {
+          toolName: name,
+          connectorKind,
+          args: redactToolArgsForReview(args, ctx.secrets),
+          userTask: botDescription,
+          botDescription,
+          matchingRules: review.matchingRules,
+        }
+      : // A new site is judged on the full URL and the owner's own words only: the task
+        // prompt of a webhook or bot-started run carries text someone else wrote.
+        review.newSite && fetchUrl
         ? {
             toolName: name,
             connectorKind,
@@ -831,15 +898,17 @@ async function reviewToolCall(
     );
     if (context.signal.aborted) return;
     const verdict = {
-      reason: judge.reason,
-      decision: applyJudgeDecision({ decision: judge.decision, consequential: gated }),
+      reason: backstop ? `Trusted source backstop: ${judge.reason}` : judge.reason,
+      // The backstop fails closed on anything but a clean pass, whatever this tool would
+      // otherwise need: nothing covers this call but the judge's own read of it.
+      decision: applyJudgeDecision({ decision: judge.decision, consequential: backstop || gated }),
     };
     if (applied) {
       await deps.prisma.externalEffect.update({
         where: { id: applied.effect.id },
         data: {
           reviewDecision: judge.decision,
-          reviewReason: judge.reason,
+          reviewReason: verdict.reason,
           reviewModel: judge.model,
         },
       });
@@ -850,10 +919,12 @@ async function reviewToolCall(
     // Cancellation must not write a review the next attempt would reuse.
     if (context.signal.aborted) return;
     // Auth/refresh failures must fail closed like a checker error, not fail the run.
-    const reviewReason = "Checker could not authenticate.";
+    const reviewReason = backstop
+      ? "Trusted source backstop: Checker could not authenticate."
+      : "Checker could not authenticate.";
     const verdict = {
       reason: reviewReason,
-      decision: applyJudgeDecision({ decision: "error", consequential: gated }),
+      decision: applyJudgeDecision({ decision: "error", consequential: backstop || gated }),
     };
     const reviewModel = checker
       ? `${checker.provider}/${checker.model}`

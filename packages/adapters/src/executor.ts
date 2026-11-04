@@ -1262,6 +1262,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           messagingChannelRun: nonOwnerChatRun,
           sourceMessage,
           connectedPlugins,
+          botTrustsWebhookSources: bot.trustWebhookSources,
         });
         // Outbound destinations this run may reach without asking. See outboundSiteGate and
         // connectorReadRequiresApproval; approvals from earlier attempts are read back from effects.

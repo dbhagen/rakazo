@@ -44,6 +44,12 @@ export function buildApprovalAskBlock(
     batch?: ToolBatch;
     /** False when a rule can never skip this approval, so "Always allow" would be a lie. */
     allowAlways?: boolean;
+    /** An untrusted webhook call this source's clean screen made eligible to trust: offer
+     * "Trust this source" in place of "Always allow this tool". */
+    trustSource?: { label: string };
+    /** Why "Trust this source" is withheld on an untrusted webhook call this toggle covers,
+     * but whose delivery did not screen clean. */
+    flaggedReason?: string;
   },
 ): MessageBlock {
   const allowAlways = options?.allowAlways ?? true;
@@ -59,17 +65,12 @@ export function buildApprovalAskBlock(
       ),
       detailFormat: toolName === "set_child_instructions" ? "code" : "text",
       status: "pending",
-      actions:
-        toolRequiresExplicitApproval(toolName) || options.summary.onceOnly || !allowAlways
-          ? [
-              { id: "allow", label: "Allow once" },
-              { id: "deny", label: "Deny" },
-            ]
-          : [
-              { id: "allow", label: "Allow once" },
-              { id: "always", label: "Always allow this tool" },
-              { id: "deny", label: "Deny" },
-            ],
+      actions: approvalActions(
+        toolName,
+        allowAlways && !options.summary.onceOnly,
+        undefined,
+        options,
+      ),
     };
   }
   if (toolName === "respond_agent_connection") {
@@ -170,7 +171,13 @@ export function buildApprovalAskBlock(
     options?.batch,
     secrets,
   );
-  const safeDetail = detail ? redactSecrets(detail, secrets) : undefined;
+  const sourceLine = options?.trustSource
+    ? `Source: ${options.trustSource.label}`
+    : options?.flaggedReason
+      ? `Trust this source isn't offered: this delivery was flagged (${options.flaggedReason}).`
+      : undefined;
+  const combinedDetail = [sourceLine, detail].filter(Boolean).join("\n");
+  const safeDetail = combinedDetail ? redactSecrets(combinedDetail, secrets) : undefined;
   return {
     kind: "ask",
     approvalEffectId: effectId,
@@ -190,20 +197,39 @@ export function buildApprovalAskBlock(
             { id: "allow", label: "Create space", outcome: "created" },
             { id: "deny", label: "Cancel", outcome: "cancelled" },
           ]
-        : toolRequiresExplicitApproval(toolName) || !allowAlways
-          ? [
-              { id: "allow", label: "Allow once" },
-              { id: "deny", label: "Deny" },
-            ]
-          : [
-              { id: "allow", label: "Allow once" },
-              {
-                id: "always",
-                label: fetchSite ? `Always allow ${fetchSite}` : "Always allow this tool",
-              },
-              { id: "deny", label: "Deny" },
-            ],
+        : approvalActions(toolName, allowAlways, fetchSite, options),
   };
+}
+
+/**
+ * The actions under a standard ask card: always allow-once and deny, plus either an
+ * always-allow (the tool, or the fetch site it names) or, on an untrusted webhook call this
+ * source's clean screen made eligible, an offer to trust the source instead.
+ */
+function approvalActions(
+  toolName: string,
+  allowAlways: boolean,
+  fetchSite: string | undefined,
+  options?: { trustSource?: { label: string } },
+): NonNullable<Extract<MessageBlock, { kind: "ask" }>["actions"]> {
+  if (options?.trustSource) {
+    return [
+      { id: "allow", label: "Allow once" },
+      { id: "trust_source", label: "Trust this source" },
+      { id: "deny", label: "Deny" },
+    ];
+  }
+  if (toolRequiresExplicitApproval(toolName) || !allowAlways) {
+    return [
+      { id: "allow", label: "Allow once" },
+      { id: "deny", label: "Deny" },
+    ];
+  }
+  return [
+    { id: "allow", label: "Allow once" },
+    { id: "always", label: fetchSite ? `Always allow ${fetchSite}` : "Always allow this tool" },
+    { id: "deny", label: "Deny" },
+  ];
 }
 
 function webFetchSite(toolName: string, args: Record<string, unknown>): string | undefined {
