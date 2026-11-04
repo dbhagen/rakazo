@@ -19,6 +19,8 @@ import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ComputerMaintenanceActions } from "../../components/ComputerMaintenanceActions";
 import { computersAreUnavailable } from "../../components/ComputersUnavailableHint";
+import type { PopOutHostState } from "../../lib/computer-pop-out-channel";
+import { createPopOutHost, supportsPopOutChannel } from "../../lib/computer-pop-out-channel";
 import {
   bootComputerOnce,
   createScreenRefocus,
@@ -272,6 +274,11 @@ export function useComputerState({
   computerVisible.current = panel === "computer" || computerOpen;
   computerOpenRef.current = computerOpen;
   computerBotIdRef.current = computerBotId ?? activeId;
+  // A pop-out window shows the live screen instead; the main window neither fetches it nor
+  // keeps it awake while that window holds it (see useComputerControls's pop-out host).
+  const [popOutState, setPopOutState] = useState<PopOutHostState>("main");
+  const popOutStateRef = useRef<PopOutHostState>("main");
+  popOutStateRef.current = popOutState;
 
   function cacheComputerFor(botId: string, patch: Partial<CachedComputer>) {
     const cache = computerCacheRef.current;
@@ -310,7 +317,7 @@ export function useComputerState({
   }
 
   async function refreshComputerScreen(id: string) {
-    if (!computerVisible.current) return null;
+    if (!computerVisible.current || popOutStateRef.current !== "main") return null;
     const request = ++screenRequest.current;
     const issuedState = computerRef.current?.botId === id ? computerRef.current.state : undefined;
     return loadComputerScreen({
@@ -384,6 +391,9 @@ export function useComputerState({
     screenAwaitsRetry,
     computerVisible,
     refreshComputerScreen,
+    popOutState,
+    setPopOutState,
+    popOutStateRef,
   };
 }
 
@@ -445,6 +455,8 @@ export function useComputerControls({
     screenAwaitsRetry,
     computerVisible,
     refreshComputerScreen,
+    popOutState,
+    setPopOutState,
   } = state;
   const [keepComputerRecovery, setKeepComputerRecovery] = useState(false);
   const recoveryHoldTimer = useRef<number | undefined>(undefined);
@@ -473,6 +485,57 @@ export function useComputerControls({
   }, [computerBot?.id, screenUrl]);
   const computerBootEpoch = useRef(0);
   const autoBooted = useRef<string | null>(null);
+
+  // A pop-out window coordinates the screen with this one over a BroadcastChannel named for the
+  // bot being shown here (panel or overlay); only one side shows the live screen at a time.
+  const popOutVisibleBotId = panel === "computer" || computerOpen ? computerBot?.id : undefined;
+  const popOutHostRef = useRef<ReturnType<typeof createPopOutHost> | null>(null);
+  const popOutHostBotIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (popOutHostBotIdRef.current === popOutVisibleBotId) return;
+    popOutHostRef.current?.close();
+    popOutHostRef.current = null;
+    popOutHostBotIdRef.current = popOutVisibleBotId;
+    setPopOutState("main");
+    if (!popOutVisibleBotId) return;
+    popOutHostRef.current = createPopOutHost(popOutVisibleBotId, setPopOutState);
+  }, [popOutVisibleBotId]);
+  useEffect(() => () => popOutHostRef.current?.close(), []);
+  // Releases control here once a pop-out claims the screen; "lost" waits for the user to choose,
+  // since it's unknown whether the pop-out still holds it.
+  useEffect(() => {
+    if (popOutState !== "popped-out") return;
+    const botId = computerBot?.id;
+    if (botId && userHoldsComputerControl(computer, botId))
+      void releaseComputer().catch(() => undefined);
+  }, [popOutState]);
+  // Returning here (from "popped-out" or "lost") re-fetches the screen, as after a reconnect.
+  const prevPopOutState = useRef<PopOutHostState>("main");
+  useEffect(() => {
+    const botId = computerBot?.id;
+    if (prevPopOutState.current !== "main" && popOutState === "main" && botId) {
+      void refreshComputerScreen(botId);
+    }
+    prevPopOutState.current = popOutState;
+  }, [popOutState]);
+  const requestReturnFromPopOut = useCallback(() => popOutHostRef.current?.requestReturn(), []);
+  const reacquireFromPopOut = useCallback(() => popOutHostRef.current?.reacquire(), []);
+  const popOutNotice =
+    popOutState === "popped-out" ? (
+      <div className="flex flex-col items-center gap-3">
+        <p>{t`Open in another window`}</p>
+        <Button variant="outline" size="sm" onClick={requestReturnFromPopOut}>
+          {t`Bring back here`}
+        </Button>
+      </div>
+    ) : popOutState === "lost" ? (
+      <div className="flex flex-col items-center gap-3">
+        <p>{t`Lost the connection to that window`}</p>
+        <Button variant="outline" size="sm" onClick={reacquireFromPopOut}>
+          {t`Reconnect here`}
+        </Button>
+      </div>
+    ) : null;
 
   async function bootComputer({
     botId: targetBotId,
@@ -545,6 +608,8 @@ export function useComputerControls({
       return;
     }
     if (!active) return;
+    // A screen a pop-out holds must not be auto-booted or re-read from here.
+    if (popOutState !== "main") return;
     const botId = active.id;
     // Opening the panel is a fresh try at a screen that failed.
     screenAwaitsRetry.current = false;
@@ -569,7 +634,7 @@ export function useComputerControls({
     return () => {
       cancelled = true;
     };
-  }, [panel, active?.id]);
+  }, [panel, active?.id, popOutState]);
 
   useEffect(() => {
     setComputerOpen(false);
@@ -589,7 +654,7 @@ export function useComputerControls({
   // ends, or the open window is left on a stopped computer with nothing to press.
   const computerBlockedByRun = computerTakeoverBlocked(computer, runStatus);
   useEffect(() => {
-    if (computerBlockedByRun) return;
+    if (computerBlockedByRun || popOutState !== "main") return;
     const botId = computer?.botId;
     if (!botId || !computerOpenRef.current || computerBotIdRef.current !== botId) return;
     if (activeBotId.current !== botId) return;
@@ -600,7 +665,7 @@ export function useComputerControls({
       showProgress: true,
       force: true,
     }).catch(() => undefined);
-  }, [computerBlockedByRun]);
+  }, [computerBlockedByRun, popOutState]);
 
   useEffect(() => {
     if (!computerOpen) return;
@@ -614,7 +679,14 @@ export function useComputerControls({
 
   useEffect(() => {
     const heartbeatBotId = computerBot?.id ?? active?.id;
-    if ((panel !== "computer" && !computerOpen) || !heartbeatBotId || computer?.state !== "running")
+    if (
+      (panel !== "computer" && !computerOpen) ||
+      !heartbeatBotId ||
+      computer?.state !== "running" ||
+      // A pop-out window keeps its own screen session awake; the main window must not
+      // double-heartbeat a screen it isn't even showing.
+      popOutState !== "main"
+    )
       return;
     // A computer panel left open in a hidden window must not keep the computer awake.
     const ping = () => {
@@ -626,7 +698,7 @@ export function useComputerControls({
     const timer = window.setInterval(ping, 60_000);
     ping();
     return () => window.clearInterval(timer);
-  }, [panel, computerOpen, computerBot?.id, active?.id, computer?.state]);
+  }, [panel, computerOpen, computerBot?.id, active?.id, computer?.state, popOutState]);
 
   /** Open the computer view. Only an explicit Take control asks for the lease. */
   async function openComputer(botId?: string, takeControl = false) {
@@ -692,7 +764,19 @@ export function useComputerControls({
     }
   }
 
-  const embeddedScreenUrl = embeddableScreenUrl(screenUrl);
+  const onPopOut =
+    supportsPopOutChannel() && computerBot
+      ? () => {
+          const id = computerBot.id;
+          window.open(
+            `/app/computer/${id}`,
+            `rakazo-computer-${id}`,
+            "popup,width=1280,height=860",
+          );
+        }
+      : undefined;
+  // The pop-out holds the live screen while popped out/lost; this side shows its own notice.
+  const embeddedScreenUrl = popOutState === "main" ? embeddableScreenUrl(screenUrl) : null;
   const hasControl = userHoldsComputerControl(computer, computerBot?.id);
   const hideScreenLoadError = computerErrorFromScreen && Boolean(embeddedScreenUrl);
   const screenFailure =
@@ -788,10 +872,18 @@ export function useComputerControls({
     holdComputerRecovery,
     releaseComputerRecovery,
     showComputerRecoveryHint,
-    showingRecoveryHint,
+    showingRecoveryHint: popOutState === "main" && showingRecoveryHint,
     embeddedScreenUrl,
     hasControl,
-    computerScreenError,
-    computerBooting,
+    // A pop-out's placeholder replaces the usual screen error while it holds (or held) the screen.
+    computerScreenError: popOutState === "main" ? computerScreenError : null,
+    computerBooting: popOutState === "main" ? computerBooting : null,
+    popOutState,
+    popOutNotice,
+    onPopOut,
+    requestReturnFromPopOut,
+    reacquireFromPopOut,
   };
 }
+
+export type ComputerControls = ReturnType<typeof useComputerControls>;

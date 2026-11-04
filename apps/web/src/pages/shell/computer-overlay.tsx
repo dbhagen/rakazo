@@ -40,6 +40,8 @@ type ComputerOverlayProps = {
   screenFrameRef: (frame: HTMLIFrameElement | null) => void;
   computerScreenError: ReactNode;
   computerBooting: ReactNode;
+  /** Shown instead of the live screen while a pop-out window holds (or held) it. */
+  popOutNotice?: ReactNode;
   /** The active bot thread's messages, newest last; the dock shows the latest few with the chat. */
   dockMessages: readonly ThreadMessage[];
   /** Everything the dock's messages need to render interactively, same as the main transcript. */
@@ -74,6 +76,7 @@ export function ComputerOverlay({
   screenFrameRef,
   computerScreenError,
   computerBooting,
+  popOutNotice,
   dockMessages,
   dockMessageProps,
   onStopTeaching,
@@ -216,7 +219,14 @@ export function ComputerOverlay({
           </div>
         ) : null}
         <div className="relative min-h-0 flex-1 bg-background">
-          {computer?.kind === "desktop" ? (
+          {popOutNotice ? (
+            <div
+              data-testid="computer-pop-out-notice"
+              className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80"
+            >
+              {popOutNotice}
+            </div>
+          ) : computer?.kind === "desktop" ? (
             <DesktopKindEmptyState className="grid h-full place-items-center px-8 text-center text-sm text-muted-foreground/80" />
           ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
             <>

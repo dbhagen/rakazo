@@ -1199,6 +1199,7 @@ function SpaceShell() {
               screenFrameRef={computerState.setScreenFrame}
               computerScreenError={computerControls.computerScreenError}
               computerBooting={computerControls.computerBooting}
+              popOutNotice={computerControls.popOutNotice}
               booting={booting}
               showingRecoveryHint={computerControls.showingRecoveryHint}
               showComputerRecoveryHint={computerControls.showComputerRecoveryHint}
@@ -1335,6 +1336,8 @@ function SpaceShell() {
           screenFrameRef={computerState.setScreenFrame}
           computerScreenError={computerControls.computerScreenError}
           computerBooting={computerControls.computerBooting}
+          popOutNotice={computerControls.popOutNotice}
+          onPopOut={computerControls.onPopOut}
           // The overlay opens for the active bot's own computer, so the dock follows that
           // thread; a computer opened for another bot shows no messages rather than the wrong
           // thread's.

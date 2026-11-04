@@ -18,6 +18,8 @@ type ComputerPanelProps = {
   screenFrameRef: (frame: HTMLIFrameElement | null) => void;
   computerScreenError: ReactNode;
   computerBooting: ReactNode;
+  /** Shown instead of the live screen while a pop-out window holds (or held) it. */
+  popOutNotice?: ReactNode;
   booting: boolean;
   showingRecoveryHint: boolean;
   showComputerRecoveryHint: boolean;
@@ -78,6 +80,7 @@ function ComputerPreview({
   screenFrameRef,
   computerScreenError,
   computerBooting,
+  popOutNotice,
   booting,
   showingRecoveryHint,
   showComputerRecoveryHint,
@@ -90,6 +93,7 @@ function ComputerPreview({
   // A clickable preview invites a boot that costs money, so an idle computer only wakes from its button.
   const idle =
     !computerOpen &&
+    !popOutNotice &&
     !booting &&
     !computerBooting &&
     !computerScreenError &&
@@ -127,7 +131,7 @@ function ComputerPreview({
       </div>
     );
   }
-  const canOpen = !computerScreenError && !showingRecoveryHint;
+  const canOpen = !computerScreenError && !showingRecoveryHint && !popOutNotice;
   // The Open pill replaces the status text on hover; fade it so they never overlap.
   const hideOnHover = canOpen
     ? "transition-opacity group-hover:opacity-0 group-has-[:focus-visible]:opacity-0"
@@ -140,7 +144,14 @@ function ComputerPreview({
           showingRecoveryHint ? "" : "aspect-[16/10] overflow-hidden"
         }`}
       >
-        {computerOpen ? (
+        {popOutNotice ? (
+          <div
+            data-testid="computer-pop-out-notice"
+            className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80"
+          >
+            {popOutNotice}
+          </div>
+        ) : computerOpen ? (
           <div
             className={`grid h-full place-items-center text-sm text-muted-foreground/80 ${hideOnHover}`}
           >
