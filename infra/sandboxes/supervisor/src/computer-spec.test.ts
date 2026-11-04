@@ -141,6 +141,9 @@ describe("graphical computer spec", () => {
     expect(screenPorts(0)).toMatchObject({ display: ":1", viewPort: "6080", controlPort: "6080" });
     expect(screenPorts(1)).toMatchObject({ display: ":2", viewPort: "6080", controlPort: "6080" });
     expect(options.HostConfig.ShmSize).toBeGreaterThanOrEqual(256 * 1024 * 1024);
+    // Chromium/Brave need time to exit cleanly (start.sh's shutdown()) before Docker
+    // escalates to SIGKILL, or an abandoned sign-in session is lost on restart.
+    expect(options.HostConfig.StopTimeout).toBe(60);
     expect(options.User).toBe("1000:1000");
     expect(options.HostConfig.CapDrop).toEqual(["ALL"]);
     expect(options.HostConfig.SecurityOpt).toEqual(["no-new-privileges:true"]);

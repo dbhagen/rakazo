@@ -614,6 +614,9 @@ export function containerCreateOptions(input: ComputerCreateInput) {
             Mounts: extraMounts.length ? extraMounts : undefined,
           }),
       PortBindings: ports.PortBindings,
+      // Give Chromium/Brave time to exit cleanly (start.sh's shutdown()) before
+      // Docker escalates to SIGKILL; a killed browser drops its session cookies.
+      StopTimeout: 60,
       ShmSize: 256 * 1024 * 1024,
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges:true"],

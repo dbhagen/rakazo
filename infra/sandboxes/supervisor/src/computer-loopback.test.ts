@@ -200,6 +200,36 @@ describe("computer loopback provision lifecycle", () => {
     expect(container.stop).toHaveBeenCalledOnce();
   });
 
+  it("stops the container without a shorter timeout override, so the container's StopTimeout applies", async () => {
+    const { supervisorApp } = await import("./index.js");
+    const container = {
+      inspect: vi.fn(async () => ({
+        Config: {
+          Labels: { "rakazo.managed": "true", "rakazo.botId": "bot", "rakazo.spaceId": "space" },
+        },
+        State: { Running: true },
+      })),
+      exec: vi.fn(async () => ({
+        start: async () => Readable.from([]),
+        inspect: async () => ({ ExitCode: 0 }),
+      })),
+      stop: vi.fn(async () => {}),
+    };
+    mocks.docker.getContainer.mockReturnValue(container);
+    const response = await supervisorApp.request("/computers/no-short-stop-timeout/stop", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
+        "x-rakazo-bot-id": "bot",
+        "x-rakazo-space-id": "space",
+      },
+    });
+    expect(response.status).toBe(200);
+    // No args means Docker falls back to the container's own StopTimeout (60s),
+    // giving start.sh's shutdown() room to close browsers cleanly.
+    expect(container.stop).toHaveBeenCalledWith();
+  });
+
   it("quiesces browser profiles with Browser.close before stopping the container", async () => {
     const { supervisorApp } = await import("./index.js");
     const container = {

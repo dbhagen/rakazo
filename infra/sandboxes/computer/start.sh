@@ -15,8 +15,50 @@ cd "$AGENT_HOME"
 # its grace period. Install the handler before any child starts so a stop during startup is
 # honoured too.
 XVFB_PID=""
+# A SIGTERM-ed Chromium/Brave that never gets to exit cleanly marks its profile
+# "Crashed" on disk; rakazo-browser's next launch treats that as a crash and the
+# saved sign-in session is dropped. Ask each running browser to close first and
+# give it time, before falling back to the group kill.
+GRACEFUL_BROWSER_WAIT_SECONDS=45
+close_browsers_gracefully() {
+  local pid_file pid waited=0 any_left
+  local pids=()
+  for pid_file in /tmp/rakazo/browser-pid-*; do
+    [[ -e "$pid_file" ]] || continue
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    [[ -n "$pid" ]] || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "shutdown: sending SIGTERM to browser pid $pid ($pid_file)" >&2
+      kill -TERM "$pid" 2>/dev/null || true
+      pids+=("$pid")
+    fi
+  done
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    echo "shutdown: no running browser pids found" >&2
+    return
+  fi
+  while [[ "$waited" -lt "$GRACEFUL_BROWSER_WAIT_SECONDS" ]]; do
+    any_left=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        any_left=1
+        break
+      fi
+    done
+    [[ "$any_left" -eq 0 ]] && break
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [[ "$any_left" -eq 1 ]]; then
+    echo "shutdown: browser(s) still running after ${GRACEFUL_BROWSER_WAIT_SECONDS}s, proceeding to kill the process group" >&2
+  else
+    echo "shutdown: all browsers exited cleanly after ${waited}s" >&2
+  fi
+}
 shutdown() {
   trap - TERM INT
+  echo "shutdown: starting graceful shutdown" >&2
+  close_browsers_gracefully
   if [[ -n "$XVFB_PID" ]]; then
     kill -TERM "$XVFB_PID" 2>/dev/null || true
   fi
@@ -24,6 +66,7 @@ shutdown() {
   if [[ -n "$XVFB_PID" ]]; then
     wait "$XVFB_PID" 2>/dev/null || true
   fi
+  echo "shutdown: complete" >&2
   exit 0
 }
 trap shutdown TERM INT
