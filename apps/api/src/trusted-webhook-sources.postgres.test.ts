@@ -9,9 +9,10 @@ import {
   FakeSandboxProvider,
   LocalAgentHomeStore,
 } from "@rakazo/adapters";
+import type { MessageBlock } from "@rakazo/contracts";
+import { isApprovalAskBlock } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import {
-  asSystem,
   createDb,
   createThreadEvents,
   installAuditEventStore,
@@ -33,15 +34,24 @@ import {
 // Mirrors apps/api/src/webhook-inbound.test.ts: deliverWebhookEvent has no injectable seam
 // for the classifier itself (screenWebhookDelivery takes only prisma/secretStore), so a clean
 // verdict is produced the same way that unit test produces one, by mocking the function at
-// its module boundary. A suspicious payload never needs this: screenWebhookPayload's heuristic
-// trips first and short-circuits before any classifier call, so those deliveries run the real,
-// unmocked screen.
+// its module boundary. A suspicious payload needs no classifier mock: it delegates to the real
+// implementation instead, so screenWebhookPayload's heuristic trips for real and short-circuits
+// before any classifier call. Every test that reaches the classifier must set its own
+// once-only mock; the default implementation throws instead of resolving to undefined, so a
+// missing per-test setup fails loudly rather than producing a malformed webhookSource.
 vi.mock("@rakazo/adapters", async (original) => ({
   ...(await original<Record<string, unknown>>()),
-  screenWebhookDelivery: vi.fn(),
+  screenWebhookDelivery: vi.fn(() => {
+    throw new Error(
+      "screenWebhookDelivery called with no per-test mock; set one with mockResolvedValueOnce " +
+        "or delegate to the real implementation with mockImplementationOnce(actualScreen)",
+    );
+  }),
 }));
 
 const { screenWebhookDelivery } = await import("@rakazo/adapters");
+const { screenWebhookDelivery: actualScreen } =
+  await vi.importActual<typeof import("@rakazo/adapters")>("@rakazo/adapters");
 
 const runtimeUrl = process.env.DATABASE_URL;
 const migrationUrl = process.env.DATABASE_MIGRATION_URL;
@@ -98,9 +108,11 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
   afterAll(async () => {
     installAuditEventStore(undefined);
     if (owner) {
-      await owner.messagingIdentity.deleteMany({ where: { address: { in: addresses } } });
-      await owner.organization.deleteMany({ where: { id: { in: spaceIds } } });
-      await owner.user.deleteMany({ where: { id: { in: spaceIds } } });
+      await runAsSystem("trusted webhook e2e cleanup", async () => {
+        await owner.messagingIdentity.deleteMany({ where: { address: { in: addresses } } });
+        await owner.organization.deleteMany({ where: { id: { in: spaceIds } } });
+        await owner.user.deleteMany({ where: { id: { in: spaceIds } } });
+      });
     }
     if (db) {
       await db.prisma.$disconnect();
@@ -154,25 +166,27 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     payload: Record<string, unknown>,
     opts: { allowParallelRun?: boolean } = {},
   ) {
-    const target = {
-      bot: {
-        id: identity.botId,
-        spaceId: identity.spaceId,
-        userId: identity.userId,
-        trustWebhookSources: true,
-      },
-      threadId: identity.threadId,
-    };
-    return runAsSystem("bot webhook", () =>
-      deliverWebhookEvent(webhookDeps(), target, {
-        prompt: JSON.stringify(payload),
-        routines: [],
-        source: "webhook",
-        idempotencyKey: randomUUID(),
-        sourceIdentity: genericWebhookSourceIdentity(identity.botId),
-        allowParallelRun: opts.allowParallelRun,
-      }),
-    );
+    return runAsSystem("bot webhook", async () => {
+      // Load the live toggle the same fields the route's loadWebhookTarget reads, so a test
+      // that flips trustWebhookSources on the bot row is actually exercised by the delivery
+      // instead of a value this helper assumed.
+      const bot = await app.bot.findUniqueOrThrow({
+        where: { id: identity.botId },
+        select: { id: true, spaceId: true, userId: true, trustWebhookSources: true },
+      });
+      return deliverWebhookEvent(
+        webhookDeps(),
+        { bot, threadId: identity.threadId },
+        {
+          prompt: JSON.stringify(payload),
+          routines: [],
+          source: "webhook",
+          idempotencyKey: randomUUID(),
+          sourceIdentity: genericWebhookSourceIdentity(identity.botId),
+          allowParallelRun: opts.allowParallelRun,
+        },
+      );
+    });
   }
 
   /** Drives the created run's executor turn with a scripted single shell call. */
@@ -316,17 +330,15 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
       );
       expect(passedEffect.reviewDecision).toBe("pass");
       expect(String(passedEffect.reviewReason)).toMatch(/^Trusted source backstop/);
-      expect(
-        await runAsSystem("test read", () =>
-          app.message.count({
-            where: {
-              runId: second.runId!,
-              role: "bot",
-              blocks: { path: ["0", "kind"], equals: "ask" },
-            },
-          }),
-        ),
-      ).toBe(0);
+      const botMessages = await runAsSystem("test read", () =>
+        app.message.findMany({ where: { runId: second.runId!, role: "bot" } }),
+      );
+      const approvalAsks = botMessages.flatMap((message) =>
+        (message.blocks as MessageBlock[]).filter((block) => isApprovalAskBlock(block)),
+      );
+      expect(approvalAsks, `found approval ask block(s): ${JSON.stringify(approvalAsks)}`).toEqual(
+        [],
+      );
 
       // 4) Same, but the judge is unsure: the call still needs the owner, this time with
       //    "always" in place of "trust this source" (the owner already trusts the source).
@@ -411,7 +423,9 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
   it("flags an injection payload and withholds trust_source on its card", async () => {
     const identity = await fixture();
     await allowShellAlways(identity.userId);
-    // No classifier mock: the heuristic trips on its own, no network call needed.
+    // Delegate to the real implementation: its heuristic trips on its own, with no
+    // classifier/network call, so there is nothing to fake here.
+    vi.mocked(screenWebhookDelivery).mockImplementationOnce(actualScreen);
     const sent = await deliver(identity, INJECTION_PAYLOAD);
     const run = await runAsSystem("test read", () =>
       app.run.findUniqueOrThrow({ where: { id: sent.runId! } }),
@@ -447,7 +461,9 @@ describePostgres("trusted webhook sources end to end (PostgreSQL)", () => {
     expect(run.status).toBe("queued");
 
     // A second delivery to the same thread, with a suspicious payload, before the first run
-    // starts: it attaches to the active run rather than starting a new one.
+    // starts: it attaches to the active run rather than starting a new one. Its heuristic
+    // trips for real; no classifier mock needed.
+    vi.mocked(screenWebhookDelivery).mockImplementationOnce(actualScreen);
     const second = await deliver(identity, INJECTION_PAYLOAD);
     expect(second.runId).toBe(first.runId);
     run = await runAsSystem("test read", () =>

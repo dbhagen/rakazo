@@ -352,15 +352,36 @@ export function downgradedWebhookSource(
   existing: Prisma.JsonValue | null | undefined,
   incoming: RunWebhookSource,
 ): RunWebhookSource["screen"] | null {
-  const parsed = RunWebhookSourceSchema.safeParse(existing);
-  if (!parsed.success) return null;
-  const current = parsed.data;
-  const sameSource = current.sourceKey === incoming.sourceKey;
-  if (sameSource && incoming.screen.verdict === "clean") return null;
+  // A run never started by a webhook has nothing to downgrade.
+  if (existing == null) return null;
+  const parsedExisting = RunWebhookSourceSchema.safeParse(existing);
+  if (!parsedExisting.success) {
+    // Stored data that does not parse means this run's screen cannot be trusted either
+    // way; surface that explicitly instead of silently keeping (or dropping) stale trust.
+    return {
+      verdict: "error",
+      hits: ["invalid_source"],
+      reason: "Stored webhook source was invalid",
+    };
+  }
+  const current = parsedExisting.data;
+  const parsedIncoming = RunWebhookSourceSchema.safeParse(incoming);
+  if (!parsedIncoming.success) {
+    // A malformed incoming screen counts as not clean: downgrade like any flagged delivery.
+    const hits = [...new Set([...current.screen.hits, "invalid_source"])];
+    return {
+      verdict: current.screen.verdict === "clean" ? "suspicious" : current.screen.verdict,
+      hits,
+      reason: "A later delivery into this run was flagged or came from another source",
+    };
+  }
+  const nextIncoming = parsedIncoming.data;
+  const sameSource = current.sourceKey === nextIncoming.sourceKey;
+  if (sameSource && nextIncoming.screen.verdict === "clean") return null;
   const hits = [
     ...new Set([
       ...current.screen.hits,
-      ...incoming.screen.hits,
+      ...nextIncoming.screen.hits,
       ...(sameSource ? [] : ["mixed_sources"]),
     ]),
   ];

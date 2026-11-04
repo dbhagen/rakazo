@@ -1,4 +1,5 @@
 import type { RealtimeFanout } from "@rakazo/adapter-kit";
+import type { RunWebhookSource } from "@rakazo/contracts";
 import { BOT_SECRET_VALUE_MAX_LENGTH, encodeLoginSecret } from "@rakazo/contracts";
 import {
   TAKEOVER_COMPUTER_DONE_STATE,
@@ -4968,6 +4969,29 @@ describe("downgradedWebhookSource", () => {
     ).toEqual({
       verdict: "suspicious",
       hits: ["instruction_phrasing", "mixed_sources"],
+      reason: "A later delivery into this run was flagged or came from another source",
+    });
+  });
+
+  it("flags stored data that does not parse as an explicit error, not a crash", () => {
+    expect(downgradedWebhookSource({ not: "a webhook source" }, incoming("generic:bot-1", "clean"))).toEqual(
+      {
+        verdict: "error",
+        hits: ["invalid_source"],
+        reason: "Stored webhook source was invalid",
+      },
+    );
+  });
+
+  it("downgrades on a malformed incoming screen instead of crashing", () => {
+    expect(
+      downgradedWebhookSource(
+        existing("clean", ["role_tag"]),
+        { sourceKey: "generic:bot-1", label: "l", route: "generic" } as unknown as RunWebhookSource,
+      ),
+    ).toEqual({
+      verdict: "suspicious",
+      hits: ["role_tag", "invalid_source"],
       reason: "A later delivery into this run was flagged or came from another source",
     });
   });
