@@ -137,7 +137,16 @@ function createDockNodeStack() {
       return {
         set(node: HTMLElement | null) {
           if (nodes.get(id) === node) return;
+          const hadNode = nodes.get(id) !== null && nodes.get(id) !== undefined;
           nodes.set(id, node);
+          // Going from no node to a real one makes this claim the most recently opened: it jumps
+          // to the top of the stack rather than waiting below whoever claimed earlier but already
+          // has a node, such as the computer overlay claimed before a page opens.
+          if (node && !hadNode) {
+            const index = order.indexOf(id);
+            if (index !== -1) order.splice(index, 1);
+            order.push(id);
+          }
           notify();
         },
         release() {

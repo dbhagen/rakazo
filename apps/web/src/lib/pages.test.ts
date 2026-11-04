@@ -30,6 +30,24 @@ describe("page session", () => {
   });
 });
 
+describe("dock claim stack", () => {
+  it("gives the composer to whoever most recently gained a node, falling back on release", () => {
+    const session = createPageSession();
+    const overlayNode = {} as HTMLElement;
+    const pageNode = {} as HTMLElement;
+    const overlayClaim = session.dock.claim("computer-overlay");
+    overlayClaim.set(overlayNode);
+    expect(session.dock.get().node).toBe(overlayNode);
+    // A page opens while the overlay is open: the page's claim gains a node after the overlay's,
+    // so it is the more recently opened claimant and wins the composer.
+    session.dock.set({ node: pageNode });
+    expect(session.dock.get().node).toBe(pageNode);
+    // The page closes: the composer falls back to the overlay, which still holds its claim.
+    session.dock.set({ node: null });
+    expect(session.dock.get().node).toBe(overlayNode);
+  });
+});
+
 describe("page replies", () => {
   it("hands a page's reply to the composer collapsed, only while a page is open", () => {
     const session = createPageSession();
