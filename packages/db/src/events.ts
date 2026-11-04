@@ -64,6 +64,7 @@ import { isRunResponse, readRunTimingFields } from "./run-timing.js";
 import { RUN_TURN_CHECKPOINT_KIND } from "./run-turn-checkpoint.js";
 import { recordSecurityEvent } from "./security-events.js";
 import { withTransactionRetry } from "./transaction-retry.js";
+import { trustWebhookSource } from "./webhook-trusted-sources.js";
 
 export const STRATEGIC_INITIATIVE_NONCE_PREFIX = "strategic-initiative";
 
@@ -921,6 +922,7 @@ async function commitAnswerRunInput(
       checkpoint: true,
       trigger: true,
       clientNonce: true,
+      webhookSource: true,
       task: { select: { prompt: true } },
     },
   });
@@ -1023,7 +1025,7 @@ async function commitAnswerRunInput(
       )
         return null;
     }
-    if (input.answer === "always") {
+    if (input.answer === "always" || input.answer === "trust_source") {
       if (run.userId !== input.answeredByUserId) return null;
       approvalUserId = input.answeredByUserId;
     }
@@ -1096,7 +1098,10 @@ async function commitAnswerRunInput(
         });
       }
     }
-    const allowed = approvalAnswer === "allow" || approvalAnswer === "always";
+    const allowed =
+      approvalAnswer === "allow" ||
+      approvalAnswer === "always" ||
+      approvalAnswer === "trust_source";
     await tx.externalEffect.update({
       where: { id: approvalEffect!.id },
       data: { status: allowed ? "approved" : "denied" },
@@ -1113,6 +1118,22 @@ async function commitAnswerRunInput(
           { userId: approvalUserId!, spaceId: input.spaceId },
           { effect: "always_allow", matchKind: site ? "site" : "tool", matchValue: tool },
         );
+      }
+    }
+    // Trusting the source runs this call like a plain allow, but also lets this bot's
+    // trusted-webhook gate skip asking on this exact source's later clean deliveries. A run
+    // with no valid webhookSource (missing or malformed) cannot name what to trust, so it
+    // stays a plain allow with no row.
+    if (input.answer === "trust_source") {
+      const parsedSource = RunWebhookSourceSchema.safeParse(run.webhookSource);
+      if (parsedSource.success) {
+        await trustWebhookSource(tx, {
+          botId: run.botId,
+          userId: approvalUserId!,
+          spaceId: input.spaceId,
+          sourceKey: parsedSource.data.sourceKey,
+          label: parsedSource.data.label,
+        });
       }
     }
   } else if (dismissed) {

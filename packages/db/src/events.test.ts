@@ -2467,6 +2467,207 @@ describe("answerRunInput", () => {
     },
   );
 
+  describe("trust_source", () => {
+    const pendingAsk = () => ({
+      id: "message-1",
+      blocks: [
+        {
+          kind: "ask",
+          approvalEffectId: "effect-1",
+          text: "Review before shell",
+          status: "pending",
+          actions: [
+            { id: "allow", label: "Allow once" },
+            { id: "trust_source", label: "Trust this source" },
+            { id: "deny", label: "Deny" },
+          ],
+        },
+      ],
+    });
+
+    it("trusts the run's webhook source and allows the call", async () => {
+      const fanout = new TestFanout();
+      const trustWebhookSource = vi.fn().mockResolvedValue({ id: "trust-1" });
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+        message: {
+          findFirst: vi.fn().mockResolvedValue(pendingAsk()),
+          update: vi.fn().mockResolvedValue({ id: "message-1" }),
+        },
+        run: {
+          findFirst: vi.fn().mockResolvedValue({
+            botId: "bot-1",
+            userId: "user-1",
+            trigger: "webhook",
+            webhookSource: {
+              sourceKey: "github:acme/repo",
+              label: "acme/repo webhook",
+              route: "github",
+              screen: { verdict: "clean", hits: [] },
+            },
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ status: "queued" }),
+        },
+        task: { updateMany: vi.fn() },
+        externalEffect: {
+          findFirst: vi
+            .fn()
+            .mockResolvedValue({ id: "effect-1", kind: "shell", status: "intended" }),
+          update: vi.fn().mockResolvedValue({ id: "effect-1" }),
+        },
+        webhookTrustedSource: { findFirst: vi.fn(), update: vi.fn(), create: trustWebhookSource },
+        thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 10 }) },
+        event: {
+          create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+            ...event(data.seq),
+            type: data.type,
+          })),
+        },
+      };
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await expect(
+        answerRunInput(
+          prisma,
+          {
+            spaceId: "workspace-1",
+            threadId: "thread-1",
+            runId: "run-1",
+            messageId: "message-1",
+            answeredByUserId: "user-1",
+            answer: "trust_source",
+          },
+          fanout,
+        ),
+      ).resolves.toBe(true);
+
+      expect(tx.externalEffect.update).toHaveBeenCalledWith({
+        where: { id: "effect-1" },
+        data: { status: "approved" },
+      });
+      expect(trustWebhookSource).toHaveBeenCalledWith({
+        data: {
+          botId: "bot-1",
+          userId: "user-1",
+          spaceId: "workspace-1",
+          sourceKey: "github:acme/repo",
+          label: "acme/repo webhook",
+        },
+      });
+    });
+
+    it("rejects an answer from anyone but the run's owner", async () => {
+      const fanout = new TestFanout();
+      const trustWebhookSource = vi.fn();
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+        message: { findFirst: vi.fn().mockResolvedValue(pendingAsk()) },
+        run: {
+          findFirst: vi.fn().mockResolvedValue({
+            botId: "bot-1",
+            userId: "owner-1",
+            trigger: "webhook",
+            webhookSource: {
+              sourceKey: "github:acme/repo",
+              label: "acme/repo webhook",
+              route: "github",
+              screen: { verdict: "clean", hits: [] },
+            },
+          }),
+        },
+        externalEffect: {
+          findFirst: vi
+            .fn()
+            .mockResolvedValue({ id: "effect-1", kind: "shell", status: "intended" }),
+        },
+        webhookTrustedSource: { findFirst: vi.fn(), create: trustWebhookSource },
+      };
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await expect(
+        answerRunInput(
+          prisma,
+          {
+            spaceId: "workspace-1",
+            threadId: "thread-1",
+            runId: "run-1",
+            messageId: "message-1",
+            answeredByUserId: "someone-else",
+            answer: "trust_source",
+          },
+          fanout,
+        ),
+      ).resolves.toBe(false);
+      expect(trustWebhookSource).not.toHaveBeenCalled();
+    });
+
+    it("allows the call without trusting anything when the run has no valid webhookSource", async () => {
+      const fanout = new TestFanout();
+      const trustWebhookSource = vi.fn();
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+        message: {
+          findFirst: vi.fn().mockResolvedValue(pendingAsk()),
+          update: vi.fn().mockResolvedValue({ id: "message-1" }),
+        },
+        run: {
+          findFirst: vi.fn().mockResolvedValue({
+            botId: "bot-1",
+            userId: "user-1",
+            trigger: "webhook",
+            webhookSource: null,
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          findUnique: vi.fn().mockResolvedValue({ status: "queued" }),
+        },
+        task: { updateMany: vi.fn() },
+        externalEffect: {
+          findFirst: vi
+            .fn()
+            .mockResolvedValue({ id: "effect-1", kind: "shell", status: "intended" }),
+          update: vi.fn().mockResolvedValue({ id: "effect-1" }),
+        },
+        webhookTrustedSource: { findFirst: vi.fn(), create: trustWebhookSource },
+        thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 10 }) },
+        event: {
+          create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+            ...event(data.seq),
+            type: data.type,
+          })),
+        },
+      };
+      const prisma = {
+        $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+      } as unknown as PrismaClient;
+
+      await expect(
+        answerRunInput(
+          prisma,
+          {
+            spaceId: "workspace-1",
+            threadId: "thread-1",
+            runId: "run-1",
+            messageId: "message-1",
+            answeredByUserId: "user-1",
+            answer: "trust_source",
+          },
+          fanout,
+        ),
+      ).resolves.toBe(true);
+
+      expect(tx.externalEffect.update).toHaveBeenCalledWith({
+        where: { id: "effect-1" },
+        data: { status: "approved" },
+      });
+      expect(trustWebhookSource).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     [
       "a batch",
