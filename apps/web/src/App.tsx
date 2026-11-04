@@ -39,6 +39,7 @@ import {
 } from "./lib/session-gate";
 import { syncLogOutFailure } from "./lib/sign-out";
 import { completeSsoCallback, SSO_CALLBACK_PATH } from "./lib/sso-flow";
+import { ComputerPopOutPage } from "./pages/ComputerPopOut";
 import { IntegrationCallbackPage } from "./pages/IntegrationCallback";
 import { IntegrationSetupPage } from "./pages/IntegrationSetup";
 import { McpOAuthCallbackPage } from "./pages/McpOAuthCallback";
@@ -284,6 +285,7 @@ function SessionApp() {
               >
                 <Route path="/app" element={<ShellPage />} />
                 <Route path="/app/g/:groupId" element={<ShellPage />} />
+                <Route path="/app/computer/:botId" element={<ComputerPopOutPage />} />
                 <Route path="/app/:botId" element={<ShellPage />} />
                 <Route element={<CallLayout />}>
                   <Route path="/onboarding/:step?" element={<OnboardingPage />} />
