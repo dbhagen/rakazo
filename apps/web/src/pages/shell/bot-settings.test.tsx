@@ -16,6 +16,12 @@ vi.mock("../../lib/rpc", () => {
       list: vi.fn(async () => []),
     },
     me: vi.fn(async () => ({})),
+    bots: {
+      trustedWebhookSources: {
+        list: vi.fn(async () => []),
+        revoke: vi.fn(async () => []),
+      },
+    },
   };
   return {
     rpc,
@@ -86,6 +92,7 @@ vi.mock("../ScratchpadSection", () => ({ ScratchpadSection: () => null }));
 vi.mock("../KnowledgeSection", () => ({ KnowledgeSection: () => null }));
 vi.mock("./avatar-studio-popover", () => ({ AvatarStudioPopover: () => null }));
 
+import { rpc } from "../../lib/rpc";
 import { BotSettings } from "./bot-panel";
 
 const bot = {
@@ -507,4 +514,62 @@ it("defaults daily check-ins on and saves the opt-out", async () => {
   await act(async () => toggle?.click());
   await flush();
   expect(onSave).toHaveBeenCalledWith({ dailyCheckIns: false });
+});
+
+describe("BotSettings trusted webhook sources", () => {
+  it("defaults off and saves turning it on", async () => {
+    const onSave = vi.fn<(patch: SavePatch) => Promise<void>>(async () => undefined);
+    await renderSettings(onSave);
+    const toggle = container.querySelector<HTMLButtonElement>('[id$="-trust-webhook-sources"]');
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    await act(async () => toggle?.click());
+    await flush();
+    expect(onSave).toHaveBeenCalledWith({ trustWebhookSources: true });
+  });
+
+  it("lists trusted sources even while the setting is off, with a muted note", async () => {
+    vi.mocked(rpc.bots.trustedWebhookSources.list).mockResolvedValueOnce([
+      {
+        id: "source-1",
+        botId: bot.id,
+        sourceKey: "github:acme/repo",
+        label: "acme/repo",
+        createdAt: "2026-09-01T00:00:00.000Z",
+      },
+    ]);
+    const onSave = vi.fn<(patch: SavePatch) => Promise<void>>(async () => undefined);
+    await renderSettings(onSave);
+    const list = container.querySelector('[data-testid="trusted-webhook-sources"]');
+    expect(list?.textContent).toContain("acme/repo");
+    expect(list?.textContent).toContain("Inactive while the setting is off");
+  });
+
+  it("revokes a source after an inline confirm", async () => {
+    vi.mocked(rpc.bots.trustedWebhookSources.list).mockResolvedValueOnce([
+      {
+        id: "source-1",
+        botId: bot.id,
+        sourceKey: "github:acme/repo",
+        label: "acme/repo",
+        createdAt: "2026-09-01T00:00:00.000Z",
+      },
+    ]);
+    vi.mocked(rpc.bots.trustedWebhookSources.revoke).mockResolvedValueOnce([]);
+    const onSave = vi.fn<(patch: SavePatch) => Promise<void>>(async () => undefined);
+    await renderSettings(onSave);
+    const revokeButton = [...container.querySelectorAll("button")].find(
+      (node) => node.textContent === "Revoke",
+    );
+    await act(async () => revokeButton?.click());
+    await flush();
+    const confirmButton = [...container.querySelectorAll("button")].find(
+      (node) => node.textContent === "Revoke",
+    );
+    await act(async () => confirmButton?.click());
+    await flush();
+    expect(rpc.bots.trustedWebhookSources.revoke).toHaveBeenCalledWith({
+      botId: bot.id,
+      id: "source-1",
+    });
+  });
 });

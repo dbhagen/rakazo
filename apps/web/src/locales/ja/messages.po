@@ -717,6 +717,10 @@ msgstr "今回のみ許可"
 msgid "Allow Rakazo to use Speech Recognition and the microphone in System Settings."
 msgstr ""
 
+#: src/pages/shell/bot-panel.tsx
+msgid "Allow trusted webhook sources"
+msgstr ""
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 msgid "Allow writing"
 msgstr "書き込みを許可"
@@ -1216,6 +1220,7 @@ msgstr "画像を読み取れません"
 #: src/pages/Onboarding.tsx
 #: src/pages/PaymentWalletSettingsPanel.tsx
 #: src/pages/PluginSubmissionsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/create-bot-dialog.tsx
 #: src/pages/shell/dialogs.tsx
 #: src/pages/SpaceSettingOverrides.tsx
@@ -2241,6 +2246,10 @@ msgstr "チャートを表示できませんでした"
 #: src/pages/Auth.tsx
 msgid "Could not reset password"
 msgstr "パスワードをリセットできませんでした"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Could not revoke"
+msgstr ""
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not revoke connection"
@@ -3496,6 +3505,10 @@ msgstr ""
 #: src/pages/BillingSettingsPanel.tsx
 msgid "Inactive"
 msgstr "無効"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Inactive while the setting is off"
+msgstr ""
 
 #: src/pages/shell/message-cards.tsx
 msgid "Inbox & email"
@@ -5434,8 +5447,14 @@ msgstr "プロバイダー設定を確認して、もう一度テストしてく
 
 #: src/pages/AdminAccessPage.tsx
 #: src/pages/MessagingSettingsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 msgid "Revoke"
 msgstr "取り消す"
+
+#. placeholder {0}: source.label
+#: src/pages/shell/bot-panel.tsx
+msgid "Revoke {0}?"
+msgstr ""
 
 #: src/pages/AdminAccessPage.tsx
 msgid "Revoked"
@@ -6009,6 +6028,10 @@ msgstr "{column} で並べ替え済み、昇順"
 #: src/components/markdown-copy.tsx
 msgid "Sorted by {column}, descending"
 msgstr "{column} で並べ替え済み、降順"
+
+#: src/components/AskCard.tsx
+msgid "Source trusted"
+msgstr ""
 
 #: src/lib/identity-display.ts
 #: src/pages/SettingsOverlay.tsx
@@ -6631,6 +6654,10 @@ msgstr "トライアル終了: {day}"
 msgid "Trials get fewer hours to prevent abuse."
 msgstr "不正利用を防ぐため、トライアルでは時間が少なくなっています。"
 
+#: src/components/AskCard.tsx
+msgid "Trust this source"
+msgstr ""
+
 #: src/components/TrustedLinkSitesSettings.tsx
 msgid "Trusted sites"
 msgstr "信頼済みサイト"
@@ -6949,6 +6976,10 @@ msgstr "Web、デスクトップ、モバイルアプリ"
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
 msgstr "Webhook"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one."
+msgstr ""
 
 #: src/lib/cron.ts
 msgid "Wednesday"

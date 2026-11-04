@@ -717,6 +717,10 @@ msgstr "한 번 허용"
 msgid "Allow Rakazo to use Speech Recognition and the microphone in System Settings."
 msgstr ""
 
+#: src/pages/shell/bot-panel.tsx
+msgid "Allow trusted webhook sources"
+msgstr ""
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 msgid "Allow writing"
 msgstr ""
@@ -1216,6 +1220,7 @@ msgstr "이미지를 읽을 수 없음"
 #: src/pages/Onboarding.tsx
 #: src/pages/PaymentWalletSettingsPanel.tsx
 #: src/pages/PluginSubmissionsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/create-bot-dialog.tsx
 #: src/pages/shell/dialogs.tsx
 #: src/pages/SpaceSettingOverrides.tsx
@@ -2241,6 +2246,10 @@ msgstr "차트를 만들지 못했습니다."
 #: src/pages/Auth.tsx
 msgid "Could not reset password"
 msgstr "비밀번호를 재설정할 수 없습니다"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Could not revoke"
+msgstr ""
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not revoke connection"
@@ -3495,6 +3504,10 @@ msgstr ""
 
 #: src/pages/BillingSettingsPanel.tsx
 msgid "Inactive"
+msgstr ""
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Inactive while the setting is off"
 msgstr ""
 
 #: src/pages/shell/message-cards.tsx
@@ -5434,8 +5447,14 @@ msgstr "서비스 설정을 확인한 뒤 다시 테스트하세요."
 
 #: src/pages/AdminAccessPage.tsx
 #: src/pages/MessagingSettingsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 msgid "Revoke"
 msgstr "연결 해제"
+
+#. placeholder {0}: source.label
+#: src/pages/shell/bot-panel.tsx
+msgid "Revoke {0}?"
+msgstr ""
 
 #: src/pages/AdminAccessPage.tsx
 msgid "Revoked"
@@ -6009,6 +6028,10 @@ msgstr "{column} 기준 정렬됨, 오름차순"
 #: src/components/markdown-copy.tsx
 msgid "Sorted by {column}, descending"
 msgstr "{column} 기준 정렬됨, 내림차순"
+
+#: src/components/AskCard.tsx
+msgid "Source trusted"
+msgstr ""
 
 #: src/lib/identity-display.ts
 #: src/pages/SettingsOverlay.tsx
@@ -6631,6 +6654,10 @@ msgstr ""
 msgid "Trials get fewer hours to prevent abuse."
 msgstr "악용을 막기 위해 체험 기간에는 시간이 더 적게 제공됩니다."
 
+#: src/components/AskCard.tsx
+msgid "Trust this source"
+msgstr ""
+
 #: src/components/TrustedLinkSitesSettings.tsx
 msgid "Trusted sites"
 msgstr "신뢰할 수 있는 사이트"
@@ -6949,6 +6976,10 @@ msgstr ""
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
 msgstr "웹훅"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one."
+msgstr ""
 
 #: src/lib/cron.ts
 msgid "Wednesday"

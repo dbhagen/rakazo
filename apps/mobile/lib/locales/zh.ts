@@ -125,6 +125,10 @@ export const ZH_MESSAGES: Record<string, string> = {
   "About {label}": "关于{label}",
   "Manage other bots": "管理其他机器人",
   "Allow cross-space bot communication": "允许跨空间机器人通信",
+  "Allow trusted webhook sources": "允许受信任的 Webhook 来源",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "来自受信任来源的 Webhook 调用可以使用你的“始终允许”规则。Jev 仍会逐一检查。",
+  "Manage trusted sources on the web": "请在网页版管理受信任的来源",
   "Organize the sidebar and edit bots. Instruction, model, routine and group edits need approval.":
     "整理侧边栏并编辑机器人。更改群组、指令、模型和例行任务需要你的批准。",
 

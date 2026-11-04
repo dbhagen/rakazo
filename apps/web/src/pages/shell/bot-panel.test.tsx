@@ -12,7 +12,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/rpc", () => {
   const rpc = {
-    bots: { get: vi.fn(), update: vi.fn(), restoreInstructions: vi.fn() },
+    bots: {
+      get: vi.fn(),
+      update: vi.fn(),
+      restoreInstructions: vi.fn(),
+      trustedWebhookSources: {
+        list: vi.fn().mockResolvedValue([]),
+        revoke: vi.fn().mockResolvedValue([]),
+      },
+    },
     voice: { voices: vi.fn().mockResolvedValue([]) },
     models: {
       credentials: vi.fn().mockResolvedValue([]),

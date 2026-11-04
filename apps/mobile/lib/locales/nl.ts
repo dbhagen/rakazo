@@ -132,6 +132,10 @@ export const NL_MESSAGES: Record<string, string> = {
   "Manage other bots": "Andere bots beheren",
   "Allow cross-space bot communication":
     "Communicatie tussen bots in verschillende ruimtes toestaan",
+  "Allow trusted webhook sources": "Vertrouwde webhookbronnen toestaan",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "Webhookaanroepen van een bron die je vertrouwt kunnen je regels voor Altijd toestaan gebruiken. Jev controleert elke aanroep nog steeds.",
+  "Manage trusted sources on the web": "Beheer vertrouwde bronnen op het web",
   "Organize the sidebar and edit bots. Instruction, model, routine and group edits need approval.":
     "Orden de zijbalk en bewerk bots. Wijzigingen aan groepen, instructies, modellen en routines vereisen je goedkeuring.",
 

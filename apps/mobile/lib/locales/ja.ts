@@ -139,6 +139,10 @@ export const JA_MESSAGES: Record<string, string> = {
   "About {label}": "{label}について",
   "Manage other bots": "他のボットを管理",
   "Allow cross-space bot communication": "スペースをまたいだボット間の通信を許可",
+  "Allow trusted webhook sources": "信頼済みのWebhook送信元を許可",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "信頼済みの送信元からのWebhook呼び出しには「常に許可」のルールを使用できます。Jevはそれでも1件ずつ確認します。",
+  "Manage trusted sources on the web": "信頼済みの送信元はウェブで管理してください",
   "Organize the sidebar and edit bots. Instruction, model, routine and group edits need approval.":
     "サイドバーの整理とボットの編集ができます。指示、モデル、ルーティン、グループの編集には承認が必要です。",
   Headers: "ヘッダー",

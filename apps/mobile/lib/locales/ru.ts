@@ -131,6 +131,10 @@ export const RU_MESSAGES: Record<string, string> = {
   "About {label}": "О настройке «{label}»",
   "Manage other bots": "Управлять другими ботами",
   "Allow cross-space bot communication": "Разрешить общение ботов из разных пространств",
+  "Allow trusted webhook sources": "Разрешить доверенные источники вебхуков",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "Вызовы вебхуков от доверенного источника могут использовать ваши правила «Всегда разрешать». Jev всё равно проверяет каждый из них.",
+  "Manage trusted sources on the web": "Управляйте доверенными источниками на вебе",
   "Organize the sidebar and edit bots. Instruction, model, routine and group edits need approval.":
     "Упорядочивайте боковую панель и редактируйте ботов. Изменения групп, инструкций, моделей и процедур требуют вашего одобрения.",
 

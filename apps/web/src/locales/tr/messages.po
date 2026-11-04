@@ -717,6 +717,10 @@ msgstr "Bir kez izin ver"
 msgid "Allow Rakazo to use Speech Recognition and the microphone in System Settings."
 msgstr ""
 
+#: src/pages/shell/bot-panel.tsx
+msgid "Allow trusted webhook sources"
+msgstr ""
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 msgid "Allow writing"
 msgstr ""
@@ -1216,6 +1220,7 @@ msgstr "Görselleri okuyamaz"
 #: src/pages/Onboarding.tsx
 #: src/pages/PaymentWalletSettingsPanel.tsx
 #: src/pages/PluginSubmissionsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/create-bot-dialog.tsx
 #: src/pages/shell/dialogs.tsx
 #: src/pages/SpaceSettingOverrides.tsx
@@ -2241,6 +2246,10 @@ msgstr "Grafik çizilemedi"
 #: src/pages/Auth.tsx
 msgid "Could not reset password"
 msgstr "Parola sıfırlanamadı"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Could not revoke"
+msgstr ""
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not revoke connection"
@@ -3495,6 +3504,10 @@ msgstr ""
 
 #: src/pages/BillingSettingsPanel.tsx
 msgid "Inactive"
+msgstr ""
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Inactive while the setting is off"
 msgstr ""
 
 #: src/pages/shell/message-cards.tsx
@@ -5434,8 +5447,14 @@ msgstr "Sağlayıcı ayarlarını gözden geçir ve yeniden test et."
 
 #: src/pages/AdminAccessPage.tsx
 #: src/pages/MessagingSettingsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 msgid "Revoke"
 msgstr "İptal et"
+
+#. placeholder {0}: source.label
+#: src/pages/shell/bot-panel.tsx
+msgid "Revoke {0}?"
+msgstr ""
 
 #: src/pages/AdminAccessPage.tsx
 msgid "Revoked"
@@ -6009,6 +6028,10 @@ msgstr "{column} sütununa göre sıralandı, artan"
 #: src/components/markdown-copy.tsx
 msgid "Sorted by {column}, descending"
 msgstr "{column} sütununa göre sıralandı, azalan"
+
+#: src/components/AskCard.tsx
+msgid "Source trusted"
+msgstr ""
 
 #: src/lib/identity-display.ts
 #: src/pages/SettingsOverlay.tsx
@@ -6631,6 +6654,10 @@ msgstr ""
 msgid "Trials get fewer hours to prevent abuse."
 msgstr "Kötüye kullanımı önlemek için denemelerde daha az saat verilir."
 
+#: src/components/AskCard.tsx
+msgid "Trust this source"
+msgstr ""
+
 #: src/components/TrustedLinkSitesSettings.tsx
 msgid "Trusted sites"
 msgstr "Güvenilen siteler"
@@ -6948,6 +6975,10 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
+msgstr ""
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one."
 msgstr ""
 
 #: src/lib/cron.ts

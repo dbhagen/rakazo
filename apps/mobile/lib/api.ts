@@ -1152,6 +1152,7 @@ export type MobileBot = Pick<
   | "autoSpeak"
   | "fleetManagement"
   | "crossSpaceCommunication"
+  | "trustWebhookSources"
   | "dailyCheckIns"
 > &
   Partial<Pick<Bot, "parentBotId" | "spaceId" | "instructions">>;

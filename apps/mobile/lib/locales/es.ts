@@ -143,6 +143,10 @@ export const ES_MESSAGES: Record<string, string> = {
   "Manage other bots": "Gestionar otros bots",
   "Allow cross-space bot communication":
     "Permitir la comunicación entre bots de distintos espacios",
+  "Allow trusted webhook sources": "Permitir orígenes de webhook de confianza",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "Las llamadas de webhook de un origen de confianza pueden usar tus reglas de Permitir siempre. Jev sigue revisando cada una.",
+  "Manage trusted sources on the web": "Gestiona los orígenes de confianza en la web",
   Headers: "Encabezados",
   "Add header": "Agregar encabezado",
   "Remove header": "Eliminar encabezado",

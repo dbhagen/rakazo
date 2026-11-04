@@ -82,6 +82,7 @@ export default function BotSettingsScreen() {
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [dailyCheckIns, setDailyCheckIns] = useState(true);
   const [crossSpaceCommunication, setCrossSpaceCommunication] = useState(true);
+  const [trustWebhookSources, setTrustWebhookSources] = useState(false);
   const [fleetManagement, setFleetManagement] = useState(true);
   const [credentials, setCredentials] = useState<MobileModelCredential[]>([]);
   const [catalog, setCatalog] = useState<MobileModel[]>([]);
@@ -104,6 +105,17 @@ export default function BotSettingsScreen() {
           await rpc("bots/update", { botId, crossSpaceCommunication: value });
         },
         onChange: setCrossSpaceCommunication,
+        onError: (err) => setError(errorText(err, t("Could not save bot"))),
+      }),
+    [botId, t],
+  );
+  const trustWebhookSourcesSave = useMemo(
+    () =>
+      createQueuedSave<boolean>(false, {
+        save: async (value) => {
+          await rpc("bots/update", { botId, trustWebhookSources: value });
+        },
+        onChange: setTrustWebhookSources,
         onError: (err) => setError(errorText(err, t("Could not save bot"))),
       }),
     [botId, t],
@@ -197,11 +209,21 @@ export default function BotSettingsScreen() {
         dailyCheckInsSave.reset(next.dailyCheckIns ?? true);
         setCrossSpaceCommunication(next.crossSpaceCommunication ?? true);
         crossSpaceSave.reset(next.crossSpaceCommunication ?? true);
+        setTrustWebhookSources(next.trustWebhookSources ?? false);
+        trustWebhookSourcesSave.reset(next.trustWebhookSources ?? false);
         setFleetManagement(next.fleetManagement);
         fleetSave.reset(next.fleetManagement);
       })
       .catch((err) => setError(errorText(err, t("Could not load bot"))));
-  }, [botId, dailyCheckInsSave, crossSpaceSave, fleetSave, notifySave, nameSave]);
+  }, [
+    botId,
+    dailyCheckInsSave,
+    crossSpaceSave,
+    trustWebhookSourcesSave,
+    fleetSave,
+    notifySave,
+    nameSave,
+  ]);
 
   useEffect(() => {
     void Promise.all([rpc("me"), rpc("models/list"), rpc("models/credentials")])
@@ -432,6 +454,7 @@ export default function BotSettingsScreen() {
       await Promise.all([
         dailyCheckInsSave.flush(),
         crossSpaceSave.flush(),
+        trustWebhookSourcesSave.flush(),
         fleetSave.flush(),
         notifySave.flush(),
         nameSave.flush(),
@@ -692,6 +715,30 @@ export default function BotSettingsScreen() {
                     crossSpaceSave.update(value);
                   }}
                 />
+              </View>
+              <View style={{ gap: 4 }}>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLabel, { color: tokens.foreground }]}>
+                    {t("Allow trusted webhook sources")}
+                  </Text>
+                  <NativeSwitch
+                    accessibilityLabel={t("Allow trusted webhook sources")}
+                    value={trustWebhookSources}
+                    onValueChange={(value) => {
+                      if (!botId) return;
+                      setError(null);
+                      trustWebhookSourcesSave.update(value);
+                    }}
+                  />
+                </View>
+                <Text style={{ color: tokens.mutedForeground, fontSize: 12 }}>
+                  {t(
+                    "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.",
+                  )}
+                </Text>
+                <Text style={{ color: tokens.mutedForeground, fontSize: 12 }}>
+                  {t("Manage trusted sources on the web")}
+                </Text>
               </View>
               <View style={styles.row}>
                 <Text style={[styles.rowLabel, { color: tokens.foreground }]}>

@@ -39,9 +39,11 @@ import {
   expireComputerExecutionLeases,
   InstructionConflictError,
   IsolationError,
+  listTrustedWebhookSources,
   recordComputerRunEnd,
   recordSecurityEvent,
   restoreBotUnderComputerQuota,
+  revokeTrustedWebhookSource,
   SpaceDeletionInProgressError,
   settingsTarget,
 } from "@rakazo/db";
@@ -60,6 +62,23 @@ import {
   modelSetup,
   THREAD_MESSAGE_PAGE_SIZE,
 } from "./shared.js";
+
+/** Shapes a db row for the WebhookTrustedSource contract schema. */
+function mapTrustedWebhookSource(row: {
+  id: string;
+  botId: string;
+  sourceKey: string;
+  label: string;
+  createdAt: Date;
+}) {
+  return {
+    id: row.id,
+    botId: row.botId,
+    sourceKey: row.sourceKey,
+    label: row.label,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 /** Surface a Space deletion race as a retryable conflict instead of a generic failure. */
 function mapSpaceLifecycleError(error: unknown): unknown {
@@ -653,6 +672,19 @@ export function botsRoutes(ctx: RouterContext) {
           webhookConfigured: true as const,
         };
       }),
+      trustedWebhookSources: {
+        list: authed.bots.trustedWebhookSources.list.handler(async ({ context, input }) => {
+          await repos.getBot(context.actor, input.botId);
+          const rows = await listTrustedWebhookSources(deps.prisma, { botId: input.botId });
+          return rows.map(mapTrustedWebhookSource);
+        }),
+        revoke: authed.bots.trustedWebhookSources.revoke.handler(async ({ context, input }) => {
+          await repos.getBot(context.actor, input.botId);
+          await revokeTrustedWebhookSource(deps.prisma, { id: input.id, botId: input.botId });
+          const rows = await listTrustedWebhookSources(deps.prisma, { botId: input.botId });
+          return rows.map(mapTrustedWebhookSource);
+        }),
+      },
     },
     groups: {
       create: authed.groups.create.handler(async ({ context, input }) => {

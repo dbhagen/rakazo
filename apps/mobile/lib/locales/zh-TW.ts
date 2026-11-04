@@ -116,6 +116,10 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "About {label}": "關於 {label}",
   "Manage other bots": "管理其他機器人",
   "Allow cross-space bot communication": "允許跨空間機器人通訊",
+  "Allow trusted webhook sources": "允許信任的 Webhook 來源",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "來自信任來源的 Webhook 呼叫可以套用你的「一律允許」規則。Jev 仍會逐一檢查。",
+  "Manage trusted sources on the web": "請在網頁版管理信任的來源",
   "Organize the sidebar and edit bots. Instruction, model, routine and group edits need approval.":
     "整理側邊欄並編輯機器人。更改群組、指令、模型和例行任務需要你的核准。",
 

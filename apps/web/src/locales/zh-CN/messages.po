@@ -717,6 +717,10 @@ msgstr "允许一次"
 msgid "Allow Rakazo to use Speech Recognition and the microphone in System Settings."
 msgstr ""
 
+#: src/pages/shell/bot-panel.tsx
+msgid "Allow trusted webhook sources"
+msgstr ""
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 msgid "Allow writing"
 msgstr "允许写入"
@@ -1216,6 +1220,7 @@ msgstr "无法读取图像"
 #: src/pages/Onboarding.tsx
 #: src/pages/PaymentWalletSettingsPanel.tsx
 #: src/pages/PluginSubmissionsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/create-bot-dialog.tsx
 #: src/pages/shell/dialogs.tsx
 #: src/pages/SpaceSettingOverrides.tsx
@@ -2241,6 +2246,10 @@ msgstr "无法渲染图表"
 #: src/pages/Auth.tsx
 msgid "Could not reset password"
 msgstr "无法重置密码"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Could not revoke"
+msgstr ""
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not revoke connection"
@@ -3496,6 +3505,10 @@ msgstr "已在此 Bot"
 #: src/pages/BillingSettingsPanel.tsx
 msgid "Inactive"
 msgstr "未启用"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Inactive while the setting is off"
+msgstr ""
 
 #: src/pages/shell/message-cards.tsx
 msgid "Inbox & email"
@@ -5434,8 +5447,14 @@ msgstr "请检查提供方设置并重新测试。"
 
 #: src/pages/AdminAccessPage.tsx
 #: src/pages/MessagingSettingsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 msgid "Revoke"
 msgstr "撤销"
+
+#. placeholder {0}: source.label
+#: src/pages/shell/bot-panel.tsx
+msgid "Revoke {0}?"
+msgstr ""
 
 #: src/pages/AdminAccessPage.tsx
 msgid "Revoked"
@@ -6009,6 +6028,10 @@ msgstr "按 {column} 排序，升序"
 #: src/components/markdown-copy.tsx
 msgid "Sorted by {column}, descending"
 msgstr "按 {column} 排序，降序"
+
+#: src/components/AskCard.tsx
+msgid "Source trusted"
+msgstr ""
 
 #: src/lib/identity-display.ts
 #: src/pages/SettingsOverlay.tsx
@@ -6631,6 +6654,10 @@ msgstr "试用将于 {day} 结束"
 msgid "Trials get fewer hours to prevent abuse."
 msgstr "为防止滥用，试用期的时长较少。"
 
+#: src/components/AskCard.tsx
+msgid "Trust this source"
+msgstr ""
+
 #: src/components/TrustedLinkSitesSettings.tsx
 msgid "Trusted sites"
 msgstr "受信任的网站"
@@ -6949,6 +6976,10 @@ msgstr "Web、桌面和移动应用"
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
 msgstr "Webhook"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one."
+msgstr ""
 
 #: src/lib/cron.ts
 msgid "Wednesday"

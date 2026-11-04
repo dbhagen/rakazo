@@ -150,6 +150,7 @@ import {
   VoiceCredentialSchema,
   VoiceInfoSchema,
   VoiceStatusSchema,
+  WebhookTrustedSourceSchema,
 } from "./domain.js";
 import { ComputerCommandSchema, ProductEventSchema } from "./events.js";
 import { Id, IsoDate, ThinkingLevelSchema } from "./ids.js";
@@ -535,6 +536,10 @@ export const appContract = {
         webhookConfigured: z.literal(true),
       }),
     ),
+    trustedWebhookSources: {
+      list: oc.input(botId).output(z.array(WebhookTrustedSourceSchema)),
+      revoke: oc.input(botId.safeExtend({ id: Id })).output(z.array(WebhookTrustedSourceSchema)),
+    },
   },
   groups: {
     create: oc.input(CreateGroupInput).output(GroupSchema),

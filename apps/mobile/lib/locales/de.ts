@@ -135,6 +135,10 @@ export const DE_MESSAGES: Record<string, string> = {
   "Manage other bots": "Andere Bots verwalten",
   "Allow cross-space bot communication":
     "Kommunikation zwischen Bots in verschiedenen Spaces erlauben",
+  "Allow trusted webhook sources": "Vertrauenswürdige Webhook-Quellen erlauben",
+  "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one.":
+    "Webhook-Aufrufe von einer vertrauten Quelle können deine Regeln für Immer erlauben nutzen. Jev prüft trotzdem jeden einzelnen.",
+  "Manage trusted sources on the web": "Vertrauenswürdige Quellen im Web verwalten",
   "Organize the sidebar and edit bots. Instruction, model, routine and group edits need approval.":
     "Ordne die Seitenleiste und bearbeite Bots. Änderungen an Gruppen, Anweisungen, Modellen und Routinen brauchen deine Zustimmung.",
 

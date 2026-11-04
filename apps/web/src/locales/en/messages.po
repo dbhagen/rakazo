@@ -717,6 +717,10 @@ msgstr "Allow once"
 msgid "Allow Rakazo to use Speech Recognition and the microphone in System Settings."
 msgstr "Allow Rakazo to use Speech Recognition and the microphone in System Settings."
 
+#: src/pages/shell/bot-panel.tsx
+msgid "Allow trusted webhook sources"
+msgstr "Allow trusted webhook sources"
+
 #: src/pages/memory-providers/SerenitySettingsForm.tsx
 msgid "Allow writing"
 msgstr "Allow writing"
@@ -1216,6 +1220,7 @@ msgstr "Can't read images"
 #: src/pages/Onboarding.tsx
 #: src/pages/PaymentWalletSettingsPanel.tsx
 #: src/pages/PluginSubmissionsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/create-bot-dialog.tsx
 #: src/pages/shell/dialogs.tsx
 #: src/pages/SpaceSettingOverrides.tsx
@@ -2241,6 +2246,10 @@ msgstr "Could not render chart"
 #: src/pages/Auth.tsx
 msgid "Could not reset password"
 msgstr "Could not reset password"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Could not revoke"
+msgstr "Could not revoke"
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Could not revoke connection"
@@ -3496,6 +3505,10 @@ msgstr "In this bot"
 #: src/pages/BillingSettingsPanel.tsx
 msgid "Inactive"
 msgstr "Inactive"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Inactive while the setting is off"
+msgstr "Inactive while the setting is off"
 
 #: src/pages/shell/message-cards.tsx
 msgid "Inbox & email"
@@ -5434,8 +5447,14 @@ msgstr "Review provider settings and test again."
 
 #: src/pages/AdminAccessPage.tsx
 #: src/pages/MessagingSettingsPanel.tsx
+#: src/pages/shell/bot-panel.tsx
 msgid "Revoke"
 msgstr "Revoke"
+
+#. placeholder {0}: source.label
+#: src/pages/shell/bot-panel.tsx
+msgid "Revoke {0}?"
+msgstr "Revoke {0}?"
 
 #: src/pages/AdminAccessPage.tsx
 msgid "Revoked"
@@ -6009,6 +6028,10 @@ msgstr "Sorted by {column}, ascending"
 #: src/components/markdown-copy.tsx
 msgid "Sorted by {column}, descending"
 msgstr "Sorted by {column}, descending"
+
+#: src/components/AskCard.tsx
+msgid "Source trusted"
+msgstr "Source trusted"
 
 #: src/lib/identity-display.ts
 #: src/pages/SettingsOverlay.tsx
@@ -6631,6 +6654,10 @@ msgstr "Trial ends {day}"
 msgid "Trials get fewer hours to prevent abuse."
 msgstr "Trials get fewer hours to prevent abuse."
 
+#: src/components/AskCard.tsx
+msgid "Trust this source"
+msgstr "Trust this source"
+
 #: src/components/TrustedLinkSitesSettings.tsx
 msgid "Trusted sites"
 msgstr "Trusted sites"
@@ -6949,6 +6976,10 @@ msgstr "Web, desktop and mobile apps"
 #: src/pages/RoutineEditor.tsx
 msgid "Webhook"
 msgstr "Webhook"
+
+#: src/pages/shell/bot-panel.tsx
+msgid "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one."
+msgstr "Webhook calls from a source you trust can use your Always allow rules. Jev still checks each one."
 
 #: src/lib/cron.ts
 msgid "Wednesday"

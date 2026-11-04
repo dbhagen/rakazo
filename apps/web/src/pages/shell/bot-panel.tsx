@@ -6,6 +6,7 @@ import type {
   ComputerMode,
   ModelCatalogEntry,
   ThinkingLevel,
+  WebhookTrustedSource,
 } from "@rakazo/contracts";
 import {
   BOT_COMPUTER_MODES,
@@ -37,7 +38,7 @@ import {
   Textarea,
   Toggle,
 } from "@rakazo/ui-web";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Settings, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Suspense, useEffect, useId, useRef, useState } from "react";
@@ -48,6 +49,8 @@ import { botProfilePatch } from "../../lib/bot-profile-patch";
 import { thinkingLevelLabel } from "../../lib/model-catalog";
 import { lazyComponent } from "../../lib/preload-recovery";
 import { useSpaceQueries } from "../../lib/query";
+import { formatRelativeTime } from "../../lib/relative-time";
+import { rpc } from "../../lib/rpc";
 import { errorText } from "../../lib/user-error";
 import { AvatarStudioPopover } from "./avatar-studio-popover";
 import { ChatModelPicker } from "./chat-model-picker";
@@ -138,6 +141,7 @@ export function BotSettings({
     autoSpeak?: boolean;
     fleetManagement?: boolean;
     crossSpaceCommunication?: boolean;
+    trustWebhookSources?: boolean;
     dailyCheckIns?: boolean;
     voiceId?: string | null;
     modelProvider?: string | null;
@@ -184,6 +188,11 @@ export function BotSettings({
     () => setCrossSpaceCommunication(bot.crossSpaceCommunication ?? true),
     [bot.crossSpaceCommunication],
   );
+  const [trustWebhookSources, setTrustWebhookSources] = useState(bot.trustWebhookSources ?? false);
+  useEffect(
+    () => setTrustWebhookSources(bot.trustWebhookSources ?? false),
+    [bot.trustWebhookSources],
+  );
   const [dailyCheckIns, setDailyCheckIns] = useState(bot.dailyCheckIns ?? true);
   useEffect(() => setDailyCheckIns(bot.dailyCheckIns ?? true), [bot.dailyCheckIns]);
   const [fleetManagement, setFleetManagement] = useState(bot.fleetManagement);
@@ -210,6 +219,7 @@ export function BotSettings({
   }, [bot.disabledBuiltinTools]);
   // Shared with the model and voice settings, so a revisit paints at once and refreshes behind.
   const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
   const refresh = { refetchOnMount: "always" } as const;
   const voices = useQuery({ ...queries.voice.voices.queryOptions({ input: {} }), ...refresh }).data;
   const credentialsQuery = useQuery({ ...queries.models.credentials.queryOptions(), ...refresh });
@@ -218,6 +228,27 @@ export function BotSettings({
   const credentials = credentialsQuery.data ?? NO_CREDENTIALS;
   const catalog = catalogQuery.data ?? NO_CATALOG;
   const me = meQuery.data ?? null;
+  const trustedSourcesQuery = useQuery({
+    ...queries.bots.trustedWebhookSources.list.queryOptions({ input: { botId: bot.id } }),
+    ...refresh,
+  });
+  const trustedSources = trustedSourcesQuery.data ?? NO_TRUSTED_SOURCES;
+  const [revokingSourceId, setRevokingSourceId] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  async function revokeTrustedSource(id: string) {
+    try {
+      setRevokeError(null);
+      const next = await rpc.bots.trustedWebhookSources.revoke({ botId: bot.id, id });
+      queryClient.setQueryData(
+        queries.bots.trustedWebhookSources.list.queryKey({ input: { botId: bot.id } }),
+        next,
+      );
+    } catch (err) {
+      setRevokeError(errorText(err, t`Could not revoke`));
+    } finally {
+      setRevokingSourceId(null);
+    }
+  }
   // A failed catalog load must not clear an existing thinkingLevel override on save.
   const modelMetaReady =
     credentialsQuery.data !== undefined &&
@@ -249,6 +280,7 @@ export function BotSettings({
         notifyOnFinish?: boolean;
         fleetManagement?: boolean;
         crossSpaceCommunication?: boolean;
+        trustWebhookSources?: boolean;
         dailyCheckIns?: boolean;
         disabledBuiltinTools?: string[];
         baseDisabledBuiltinTools?: string[];
@@ -338,6 +370,7 @@ export function BotSettings({
       notifyOnFinish?: boolean;
       fleetManagement?: boolean;
       crossSpaceCommunication?: boolean;
+      trustWebhookSources?: boolean;
       dailyCheckIns?: boolean;
       disabledBuiltinTools?: string[];
       baseDisabledBuiltinTools?: string[];
@@ -349,6 +382,10 @@ export function BotSettings({
       setError(null);
       if (patchOverrides?.crossSpaceCommunication !== undefined) {
         await onSave({ crossSpaceCommunication: patchOverrides.crossSpaceCommunication });
+        return;
+      }
+      if (patchOverrides?.trustWebhookSources !== undefined) {
+        await onSave({ trustWebhookSources: patchOverrides.trustWebhookSources });
         return;
       }
       if (patchOverrides?.dailyCheckIns !== undefined) {
@@ -461,6 +498,8 @@ export function BotSettings({
         setNotifyOnFinish(acceptedAutomatic.current.notifyOnFinish);
       if (patchOverrides?.crossSpaceCommunication !== undefined)
         setCrossSpaceCommunication(!patchOverrides.crossSpaceCommunication);
+      if (patchOverrides?.trustWebhookSources !== undefined)
+        setTrustWebhookSources(!patchOverrides.trustWebhookSources);
       if (patchOverrides?.dailyCheckIns !== undefined)
         setDailyCheckIns(!patchOverrides.dailyCheckIns);
       if (patchOverrides?.fleetManagement !== undefined)
@@ -495,6 +534,7 @@ export function BotSettings({
     notifyOnFinish?: boolean;
     fleetManagement?: boolean;
     crossSpaceCommunication?: boolean;
+    trustWebhookSources?: boolean;
     dailyCheckIns?: boolean;
     disabledBuiltinTools?: string[];
   }) {
@@ -765,6 +805,94 @@ export function BotSettings({
                   }}
                 />
               </div>
+              <div>
+                <div className="flex min-h-11 items-center justify-between gap-3 text-sm">
+                  <label htmlFor={`${ids}-trust-webhook-sources`} className={rowLabelClass}>
+                    <Trans>Allow trusted webhook sources</Trans>
+                  </label>
+                  <Switch
+                    id={`${ids}-trust-webhook-sources`}
+                    checked={trustWebhookSources}
+                    disabled={saving}
+                    onCheckedChange={(checked) => {
+                      setTrustWebhookSources(checked);
+                      void enqueueSave({ trustWebhookSources: checked });
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  <Trans>
+                    Webhook calls from a source you trust can use your Always allow rules. Jev still
+                    checks each one.
+                  </Trans>
+                </p>
+                {trustedSources.length ? (
+                  <div className="mt-3 space-y-2" data-testid="trusted-webhook-sources">
+                    {!trustWebhookSources ? (
+                      <p className="text-xs text-muted-foreground">
+                        <Trans>Inactive while the setting is off</Trans>
+                      </p>
+                    ) : null}
+                    <ul className="divide-y divide-border">
+                      {trustedSources.map((source) => (
+                        <li
+                          key={source.id}
+                          className="flex min-h-11 items-center justify-between gap-3 py-2 text-sm"
+                        >
+                          {revokingSourceId === source.id ? (
+                            <div className="flex w-full items-center justify-between gap-2">
+                              <span className="text-foreground">
+                                <Trans>Revoke {source.label}?</Trans>
+                              </span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => void revokeTrustedSource(source.id)}
+                                >
+                                  <Trans>Revoke</Trans>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setRevokingSourceId(null)}
+                                >
+                                  <Trans>Cancel</Trans>
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="min-w-0 flex-1 truncate text-foreground">
+                                {source.label}
+                                <span className="ms-2 text-xs text-muted-foreground">
+                                  {formatRelativeTime(source.createdAt)}
+                                </span>
+                              </span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => setRevokingSourceId(source.id)}
+                              >
+                                <Trans>Revoke</Trans>
+                              </Button>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {revokeError ? (
+                      <p role="alert" className="text-[13px] text-destructive">
+                        {revokeError}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               <div className="flex min-h-11 items-center justify-between gap-3 text-sm">
                 <label htmlFor={`${ids}-fleet-management`} className={rowLabelClass}>
                   <Trans>Manage other bots</Trans>
@@ -886,6 +1014,7 @@ export function BotSettings({
 
 const NO_CREDENTIALS: never[] = [];
 const NO_CATALOG: ModelCatalogEntry[] = [];
+const NO_TRUSTED_SOURCES: WebhookTrustedSource[] = [];
 
 function sameStringList(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((entry, index) => entry === right[index]);
