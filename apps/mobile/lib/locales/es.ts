@@ -322,6 +322,8 @@ export const ES_MESSAGES: Record<string, string> = {
   "Always allowed": "Siempre permitido",
   Answer: "Contestar",
   "This call is no longer ringing.": "Esta llamada ya no está sonando.",
+  "Trust this source": "Confiar en esta fuente",
+  "Source trusted": "Fuente de confianza",
   Answered: "Respondido",
   Approve: "Aprobar",
   "Approve this server to let your agent use its tools.":

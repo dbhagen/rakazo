@@ -305,6 +305,8 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "Already have an account?": "已有帳號？",
   "Always allow": "一律允許",
   "Always allowed": "已一律允許",
+  "Trust this source": "信任此來源",
+  "Source trusted": "來源已信任",
   "Android blocked notifications.": "Android 已阻止通知。",
   Answer: "接聽",
   "This call is no longer ringing.": "此通話已不在響鈴中。",

@@ -348,6 +348,8 @@ export const RU_MESSAGES: Record<string, string> = {
   "Always allow {site}": "Всегда разрешать {site}",
   "Replaces the login saved for {site}": "Заменяет сохранённый вход для {site}",
   "Always allowed": "Всегда разрешено",
+  "Trust this source": "Доверять этому источнику",
+  "Source trusted": "Источник проверен",
   "Android blocked notifications.": "Android заблокировал уведомления.",
   Answer: "Ответить",
   "This call is no longer ringing.": "Этот звонок уже не активен.",

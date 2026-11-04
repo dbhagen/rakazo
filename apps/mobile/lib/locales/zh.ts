@@ -321,6 +321,8 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Always allow {site}": "始终允许 {site}",
   "Replaces the login saved for {site}": "替换为 {site} 保存的登录信息",
   "Always allowed": "已始终允许",
+  "Trust this source": "信任此来源",
+  "Source trusted": "来源已信任",
   "Android blocked notifications.": "Android 已阻止通知。",
   Answer: "接听",
   "This call is no longer ringing.": "这通电话已经不响了。",

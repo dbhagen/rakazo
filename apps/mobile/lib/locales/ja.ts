@@ -318,6 +318,8 @@ export const JA_MESSAGES: Record<string, string> = {
   "Always allowed": "常に許可済み",
   Answer: "応答",
   "This call is no longer ringing.": "この通話の呼び出しは終了しました。",
+  "Trust this source": "このソースを信頼する",
+  "Source trusted": "ソースを信頼しました",
   Answered: "回答済み",
   Approve: "承認",
   "Approve this server to let your agent use its tools.":

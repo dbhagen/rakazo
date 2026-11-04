@@ -33,6 +33,7 @@ function formatAnsweredState(
   if (outcome === "cancelled") return t`Cancelled`;
   if (answer === "allow") return allowsSpace(actions) ? t`Allowed in this space` : t`Allowed once`;
   if (answer === "always") return t`Always allowed`;
+  if (answer === "trust_source") return t`Source trusted`;
   if (answer === "deny") return t`Denied`;
   return t`Answered: ${answer}`;
 }
@@ -57,6 +58,7 @@ function approvalActionLabel(
   if (outcome === "cancelled") return t`Cancel`;
   if (id === "allow") return ALLOW_IN_SPACE.has(fallback) ? t`Allow in this space` : t`Allow once`;
   if (id === "always") return site ? t`Always allow ${site}` : t`Always allow this tool`;
+  if (id === "trust_source") return t`Trust this source`;
   if (id === "deny") return t`Deny`;
   return fallback;
 }

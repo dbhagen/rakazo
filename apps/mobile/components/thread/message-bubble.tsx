@@ -67,6 +67,7 @@ function formatApprovalAnswer(
   if (approval && answer === "allow")
     return allowsSpace(actions) ? t("Allowed in this space") : t("Allowed once");
   if (approval && answer === "always") return t("Always allowed");
+  if (approval && answer === "trust_source") return t("Source trusted");
   if (approval && answer === "deny") return t("Denied");
   return t("Answered: {answer}", { answer: selectedAskActionLabel(answer, actions) });
 }

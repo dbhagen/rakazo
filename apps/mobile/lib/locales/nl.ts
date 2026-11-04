@@ -332,6 +332,8 @@ export const NL_MESSAGES: Record<string, string> = {
   "Always allowed": "Altijd toegestaan",
   Answer: "Opnemen",
   "This call is no longer ringing.": "Dit gesprek rinkelt niet meer.",
+  "Trust this source": "Deze bron vertrouwen",
+  "Source trusted": "Bron vertrouwd",
   Answered: "Beantwoord",
   Approve: "Goedkeuren",
   "Approve this server to let your agent use its tools.":

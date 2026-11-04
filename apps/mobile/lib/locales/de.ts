@@ -337,6 +337,8 @@ export const DE_MESSAGES: Record<string, string> = {
   "Always allowed": "Immer erlaubt",
   Answer: "Annehmen",
   "This call is no longer ringing.": "Dieser Anruf klingelt nicht mehr.",
+  "Trust this source": "Diese Quelle vertrauen",
+  "Source trusted": "Quelle vertraut",
   Answered: "Beantwortet",
   Approve: "Genehmigen",
   "Approve this server to let your agent use its tools.":

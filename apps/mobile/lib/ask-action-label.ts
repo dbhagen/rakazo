@@ -22,6 +22,7 @@ export function askActionLabel(
     return ALLOW_IN_SPACE.has(action.label) ? t("Allow in this space") : t("Allow once");
   if (action.id === "always")
     return site ? t("Always allow {site}", { site }) : t("Always allow this tool");
+  if (action.id === "trust_source") return t("Trust this source");
   if (action.id === "deny") return t("Deny");
   return action.label;
 }
