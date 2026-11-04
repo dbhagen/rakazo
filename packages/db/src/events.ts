@@ -1121,12 +1121,24 @@ async function commitAnswerRunInput(
       }
     }
     // Trusting the source runs this call like a plain allow, but also lets this bot's
-    // trusted-webhook gate skip asking on this exact source's later clean deliveries. A run
-    // with no valid webhookSource (missing or malformed) cannot name what to trust, so it
-    // stays a plain allow with no row.
+    // trusted-webhook gate skip asking on this exact source's later clean deliveries. The card
+    // may be answered well after it was issued, so eligibility is re-checked here, not assumed
+    // from when it was offered: a run that is not (still) a webhook run, a screen that is no
+    // longer clean (a later delivery can downgrade it), or a bot whose toggle the owner turned
+    // off, cannot name a source to trust, so this stays a plain allow with no row — the same as
+    // a run with no valid webhookSource (missing or malformed).
     if (input.answer === "trust_source") {
       const parsedSource = RunWebhookSourceSchema.safeParse(run.webhookSource);
-      if (parsedSource.success) {
+      const liveBot = await tx.bot.findUnique({
+        where: { id: run.botId },
+        select: { trustWebhookSources: true },
+      });
+      if (
+        run.trigger === "webhook" &&
+        parsedSource.success &&
+        parsedSource.data.screen.verdict === "clean" &&
+        liveBot?.trustWebhookSources
+      ) {
         await trustWebhookSource(tx, {
           botId: run.botId,
           userId: approvalUserId!,

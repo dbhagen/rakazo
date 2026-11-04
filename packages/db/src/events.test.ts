@@ -2517,6 +2517,7 @@ describe("answerRunInput", () => {
           update: vi.fn().mockResolvedValue({ id: "effect-1" }),
         },
         webhookTrustedSource: { findFirst: vi.fn(), update: vi.fn(), create: trustWebhookSource },
+        bot: { findUnique: vi.fn().mockResolvedValue({ trustWebhookSources: true }) },
         thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 10 }) },
         event: {
           create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
@@ -2633,6 +2634,7 @@ describe("answerRunInput", () => {
           update: vi.fn().mockResolvedValue({ id: "effect-1" }),
         },
         webhookTrustedSource: { findFirst: vi.fn(), create: trustWebhookSource },
+        bot: { findUnique: vi.fn().mockResolvedValue({ trustWebhookSources: true }) },
         thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 10 }) },
         event: {
           create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
